@@ -3,6 +3,7 @@ const scheduleEl = document.getElementById("schedule");
 const noShowEl = document.getElementById("noShowPanel");
 const printTableEl = document.getElementById("printTable");
 const scheduleSelect = document.getElementById("scheduleSelect");
+const teamSearchInput = document.getElementById("teamSearch");
 
 const judgePairsInput = document.getElementById("judgePairs");
 const slotMinutesInput = document.getElementById("slotMinutes");
@@ -14,6 +15,25 @@ const matchScheduleInput = document.getElementById("matchSchedule");
 const generateBtn = document.getElementById("generateBtn");
 const printBtn = document.getElementById("printBtn");
 const generateNoShowBtn = document.getElementById("generateNoShowBtn");
+const resetBtn = document.getElementById("resetBtn");
+
+let currentState = null;
+
+const updateLockState = (state) => {
+  const locked = Boolean(state?.locked);
+  const noshowLocked = Boolean(state?.noshow_locked);
+  if (generateBtn) {
+    generateBtn.disabled = locked;
+  }
+  if (generateNoShowBtn) {
+    generateNoShowBtn.disabled = noshowLocked;
+  }
+  if (locked) {
+    statusEl.textContent = "Schedule locked after printing. Reset to generate again.";
+  } else if (noshowLocked) {
+    statusEl.textContent = "No-show schedule locked after printing. Reset to generate again.";
+  }
+};
 
 const nowLocalInput = () => {
   const now = new Date();
@@ -42,6 +62,13 @@ const getActiveSchedule = (state) => {
     return { id: "legacy", label: "Current", slots: state.slots };
   }
   return null;
+};
+
+const getSearchTerm = () => {
+  if (!teamSearchInput) {
+    return "";
+  }
+  return teamSearchInput.value.trim().toLowerCase();
 };
 
 const renderScheduleSelect = (state) => {
@@ -80,9 +107,38 @@ const renderSchedule = (state) => {
     }
     byJudge.get(slot.judge_id).push(slot);
   });
+  byJudge.forEach((slots, judgeId) => {
+    slots.sort((a, b) => new Date(a.start) - new Date(b.start));
+    byJudge.set(judgeId, slots);
+  });
+
+  const searchTerm = getSearchTerm();
+  const filteredByJudge = new Map();
+  byJudge.forEach((slots, judgeId) => {
+    if (!searchTerm) {
+      filteredByJudge.set(judgeId, slots);
+      return;
+    }
+    const filtered = slots.filter((slot) => {
+      if (!slot.team) {
+        return false;
+      }
+      return slot.team.toLowerCase().includes(searchTerm);
+    });
+    if (filtered.length) {
+      filteredByJudge.set(judgeId, filtered);
+    }
+  });
 
   scheduleEl.innerHTML = "";
-  [...byJudge.entries()].forEach(([judgeId, slots]) => {
+  if (searchTerm && !filteredByJudge.size) {
+    scheduleEl.innerHTML = "<p>No matching teams found.</p>";
+    renderPrintTable(state, byJudge);
+    return;
+  }
+
+  const displayMap = searchTerm ? filteredByJudge : byJudge;
+  [...displayMap.entries()].forEach(([judgeId, slots]) => {
     const card = document.createElement("div");
     card.className = "judge-card";
     card.innerHTML = `<h3>Judge Pair ${judgeId}</h3>`;
@@ -260,6 +316,8 @@ const generateSchedule = async () => {
     statusEl.textContent = data.detail || "Failed to generate schedule.";
     return;
   }
+  currentState = data;
+  updateLockState(data);
   renderSchedule(data);
   renderScheduleSelect(data);
   renderNoShow(data);
@@ -283,6 +341,8 @@ const generateNoShowSchedule = async () => {
     statusEl.textContent = data.detail || "Failed to generate no-show schedule.";
     return;
   }
+  currentState = data;
+  updateLockState(data);
   renderSchedule(data);
   renderScheduleSelect(data);
   renderNoShow(data);
@@ -293,10 +353,44 @@ const loadState = async () => {
   const response = await fetch("/api/state");
   const data = await response.json();
   if (data && data.slots) {
+    currentState = data;
+    updateLockState(data);
     renderSchedule(data);
     renderScheduleSelect(data);
     renderNoShow(data);
+  } else {
+    scheduleEl.innerHTML = "<p>No schedule loaded.</p>";
+    if (printTableEl) {
+      printTableEl.innerHTML = "";
+    }
+    noShowEl.innerHTML = "<p>No no-show events yet.</p>";
+    if (scheduleSelect) {
+      scheduleSelect.innerHTML = "";
+      scheduleSelect.disabled = true;
+    }
+    updateLockState(null);
   }
+};
+
+const resetAll = async () => {
+  const confirmed = window.confirm("Reset all schedules and no-show data?");
+  if (!confirmed) {
+    return;
+  }
+  const response = await fetch("/api/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    statusEl.textContent = data.detail || "Failed to reset.";
+    return;
+  }
+  currentState = null;
+  updateLockState(null);
+  statusEl.textContent = "Reset complete.";
+  loadState();
 };
 
 const setActiveSchedule = async () => {
@@ -313,6 +407,8 @@ const setActiveSchedule = async () => {
     statusEl.textContent = data.detail || "Failed to switch schedule.";
     return;
   }
+  currentState = data;
+  updateLockState(data);
   renderSchedule(data);
   renderScheduleSelect(data);
   renderNoShow(data);
@@ -333,6 +429,8 @@ const printSchedule = async () => {
     statusEl.textContent = data.detail || "Failed to snapshot schedule.";
     return;
   }
+  currentState = data;
+  updateLockState(data);
   renderSchedule(data);
   renderScheduleSelect(data);
   window.print();
@@ -342,6 +440,10 @@ generateBtn.addEventListener("click", generateSchedule);
 printBtn.addEventListener("click", printSchedule);
 generateNoShowBtn.addEventListener("click", generateNoShowSchedule);
 scheduleSelect.addEventListener("change", setActiveSchedule);
+resetBtn.addEventListener("click", resetAll);
+if (teamSearchInput) {
+  teamSearchInput.addEventListener("input", () => renderSchedule(currentState));
+}
 if (!startTimeInput.value) {
   startTimeInput.value = nowLocalInput();
 }

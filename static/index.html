@@ -62,6 +62,7 @@
         <div class="actions">
           <button id="generateBtn" class="primary">Generate schedule</button>
           <button id="printBtn" class="secondary" type="button">Print schedule</button>
+          <button id="resetBtn" class="danger" type="button">Reset all</button>
         </div>
         <div id="status" class="status"></div>
       </section>
@@ -72,6 +73,10 @@
           <label>
             View schedule
             <select id="scheduleSelect"></select>
+          </label>
+          <label class="search">
+            Search team
+            <input id="teamSearch" type="text" placeholder="Team #" />
           </label>
         </div>
         <div id="schedule" class="schedule"></div>

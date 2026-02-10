@@ -75,6 +75,8 @@ def _match_label(match_info: Dict[str, Any]) -> str:
     round_name = str(match_tuple.get("round", "")).upper()
     match_num = match_tuple.get("match")
     if round_name and match_num is not None:
+        if round_name == "QUAL":
+            return f"Q{match_num}"
         return f"{round_name}{match_num}"
     if match_num is not None:
         return f"Match {match_num}"
@@ -228,6 +230,69 @@ def _build_schedule_version(
     }
 
 
+def _get_active_schedule(state: Dict[str, Any]) -> Dict[str, Any] | None:
+    active_id = state.get("active_schedule_id")
+    if not active_id:
+        return None
+    return next(
+        (schedule for schedule in state.get("schedules", []) if schedule.get("id") == active_id),
+        None,
+    )
+
+
+def _set_active_schedule(state: Dict[str, Any], schedule_id: str, slots: List[Dict[str, Any]]) -> None:
+    state["active_schedule_id"] = schedule_id
+    state["slots"] = slots
+
+
+def _upsert_schedule_by_type(
+    state: Dict[str, Any],
+    schedule_type: str,
+    schedule_id: str,
+    label: str,
+    slots: List[Dict[str, Any]],
+) -> str:
+    schedules = state.setdefault("schedules", [])
+    existing = next((s for s in schedules if s.get("type") == schedule_type), None)
+    if existing:
+        existing_id = existing.get("id") or schedule_id
+        existing["id"] = existing_id
+        existing["label"] = label
+        existing["type"] = schedule_type
+        existing["slots"] = slots
+        existing["file"] = _save_schedule_file(existing_id, slots)
+        existing["created_at"] = datetime.now().isoformat()
+        return existing_id
+
+    schedule_version = _build_schedule_version(
+        schedule_id,
+        label,
+        schedule_type,
+        slots,
+    )
+    schedules.append(schedule_version)
+    return schedule_id
+
+
+def _update_slot_status(state: Dict[str, Any], team: str, status: str) -> int | None:
+    judge_id = None
+    for slot in state.get("slots", []):
+        if slot.get("team") == team:
+            slot["status"] = status
+            judge_id = slot.get("judge_id")
+            break
+
+    active_id = state.get("active_schedule_id")
+    if active_id:
+        for schedule in state.get("schedules", []):
+            if schedule.get("id") == active_id:
+                for version_slot in schedule.get("slots", []):
+                    if version_slot.get("team") == team:
+                        version_slot["status"] = status
+                        break
+    return judge_id
+
+
 def _compute_gaps_sorted(
     match_entries: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -252,6 +317,60 @@ def _compute_gaps_sorted(
     return gaps
 
 
+def _collect_judge_intervals(slots: List[Dict[str, Any]]) -> Dict[int, List[Tuple[datetime, datetime]]]:
+    by_judge: Dict[int, List[Tuple[datetime, datetime]]] = {}
+    for slot in slots:
+        judge_id = slot.get("judge_id")
+        if not judge_id:
+            continue
+        start = datetime.fromisoformat(slot["start"])
+        end = datetime.fromisoformat(slot["end"])
+        by_judge.setdefault(int(judge_id), []).append((start, end))
+    for intervals in by_judge.values():
+        intervals.sort()
+    return by_judge
+
+
+def _find_slot_in_gap(
+    gap_start: datetime,
+    gap_end: datetime,
+    slot_minutes: int,
+    intervals: List[Tuple[datetime, datetime]],
+) -> Tuple[datetime, datetime] | None:
+    start = gap_start
+    slot_delta = timedelta(minutes=slot_minutes)
+    while start + slot_delta <= gap_end:
+        end = start + slot_delta
+        conflict = next(
+            (interval for interval in intervals if start < interval[1] and end > interval[0]),
+            None,
+        )
+        if not conflict:
+            return start, end
+        start = conflict[1]
+    return None
+
+
+def _find_best_slot_for_judge(
+    gaps: List[Dict[str, Any]],
+    slot_minutes: int,
+    intervals: List[Tuple[datetime, datetime]],
+    damp_delta: timedelta,
+) -> Tuple[datetime, datetime, Dict[str, Any]] | None:
+    best: Tuple[datetime, datetime, Dict[str, Any]] | None = None
+    for gap in gaps:
+        gap_start = datetime.fromisoformat(gap["start"]) + damp_delta
+        gap_end = datetime.fromisoformat(gap["end"]) - damp_delta
+        if gap_end <= gap_start:
+            continue
+        candidate = _find_slot_in_gap(gap_start, gap_end, slot_minutes, intervals)
+        if not candidate:
+            continue
+        if best is None or candidate[0] < best[0]:
+            best = (candidate[0], candidate[1], gap)
+    return best
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -264,10 +383,14 @@ def get_state() -> Dict[str, Any]:
 
 @app.post("/api/generate")
 def generate(payload: Dict[str, Any]) -> Dict[str, Any]:
+    existing_state = _load_state()
+    if existing_state.get("locked"):
+        raise HTTPException(status_code=400, detail="Schedule is locked after printing.")
     try:
         judge_pairs = int(payload.get("judge_pairs", 4))
         slot_minutes = int(payload.get("slot_minutes", 10))
         duration_minutes = int(payload.get("duration_minutes", 100))
+        block_minutes = int(payload.get("block_minutes", 8))
         start_time = _parse_start_time(payload.get("start_time", ""))
         raw_schedule = payload.get("match_schedule", "")
     except Exception as exc:
@@ -306,8 +429,11 @@ def generate(payload: Dict[str, Any]) -> Dict[str, Any]:
             "judge_pairs": judge_pairs,
             "slot_minutes": slot_minutes,
             "duration_minutes": duration_minutes,
+            "block_minutes": block_minutes,
             "start_time": start_time.isoformat(),
         },
+        "locked": False,
+        "noshow_locked": False,
         "slots": slot_payload,
         "active_schedule_id": schedule_id,
         "schedules": [schedule_version],
@@ -330,25 +456,16 @@ def checkoff(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not team:
         raise HTTPException(status_code=400, detail="Missing team.")
     state = _load_state()
-    active_id = state.get("active_schedule_id")
-    for slot in state.get("slots", []):
-        if slot.get("team") == team:
-            slot["status"] = "checked"
-            if active_id:
-                for schedule in state.get("schedules", []):
-                    if schedule.get("id") == active_id:
-                        for version_slot in schedule.get("slots", []):
-                            if version_slot.get("team") == team:
-                                version_slot["status"] = "checked"
-                                break
-            state["no_shows"] = [t for t in state.get("no_shows", []) if t != team]
-            state["no_show_suggestions"] = [
-                s for s in state.get("no_show_suggestions", []) if s.get("team") != team
-            ]
-            if state.get("last_suggestions", {}).get("team") == team:
-                state.pop("last_suggestions", None)
-            _save_state(state)
-            return state
+    judge_id = _update_slot_status(state, team, "checked")
+    if judge_id is not None:
+        state["no_shows"] = [t for t in state.get("no_shows", []) if t != team]
+        state["no_show_suggestions"] = [
+            s for s in state.get("no_show_suggestions", []) if s.get("team") != team
+        ]
+        if state.get("last_suggestions", {}).get("team") == team:
+            state.pop("last_suggestions", None)
+        _save_state(state)
+        return state
     raise HTTPException(status_code=404, detail="Team not found in slots.")
 
 
@@ -359,20 +476,7 @@ def no_show(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Missing team.")
 
     state = _load_state()
-    judge_id = None
-    active_id = state.get("active_schedule_id")
-    for slot in state.get("slots", []):
-        if slot.get("team") == team:
-            slot["status"] = "no-show"
-            judge_id = slot.get("judge_id")
-            break
-    if active_id:
-        for schedule in state.get("schedules", []):
-            if schedule.get("id") == active_id:
-                for version_slot in schedule.get("slots", []):
-                    if version_slot.get("team") == team:
-                        version_slot["status"] = "no-show"
-                        break
+    judge_id = _update_slot_status(state, team, "no-show")
     state.setdefault("no_shows", []).append(team)
 
     team_matches = state.get("team_matches", {}).get(team, [])
@@ -422,8 +526,7 @@ def set_active_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found.")
-    state["active_schedule_id"] = schedule_id
-    state["slots"] = schedule.get("slots", [])
+    _set_active_schedule(state, schedule_id, schedule.get("slots", []))
     _save_state(state)
     return state
 
@@ -436,25 +539,55 @@ def snapshot_print(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not slots:
         raise HTTPException(status_code=400, detail="No schedule to snapshot.")
 
-    schedule_id = _schedule_id("printed")
+    active_schedule = _get_active_schedule(state)
+    if active_schedule and active_schedule.get("type") == "noshow":
+        if state.get("noshow_locked"):
+            return state
+        label = "Printed no-show recovery"
+        schedule_id = _schedule_id("printed-noshow")
+        schedule_type = "printed-noshow"
+        state["noshow_locked"] = True
+    else:
+        if state.get("locked"):
+            return state
+        schedule_id = _schedule_id("printed")
+        schedule_type = "printed"
+        state["locked"] = True
     schedule_version = _build_schedule_version(
         schedule_id,
         label,
-        "printed",
+        schedule_type,
         slots,
     )
     state.setdefault("schedules", []).append(schedule_version)
-    state["active_schedule_id"] = schedule_id
+    _set_active_schedule(state, schedule_id, slots)
     _save_state(state)
     return state
+
+
+@app.post("/api/reset")
+def reset_all() -> Dict[str, Any]:
+    if STATE_PATH.exists():
+        STATE_PATH.unlink()
+    for path in DATA_DIR.glob("*.json"):
+        path.unlink(missing_ok=True)
+    return {}
 
 
 @app.post("/api/generate-noshow")
 def generate_no_show_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
     state = _load_state()
+    if state.get("noshow_locked"):
+        raise HTTPException(status_code=400, detail="No-show schedule is locked after printing.")
     config = state.get("config", {})
     slot_minutes = int(config.get("slot_minutes", 10))
     judge_pairs = int(config.get("judge_pairs", 1))
+    block_minutes = int(config.get("block_minutes", 0))
+    damp_delta = timedelta(minutes=block_minutes / 2) if block_minutes > 0 else timedelta(0)
+
+    active_schedule = _get_active_schedule(state)
+    base_slots = active_schedule.get("slots", []) if active_schedule else state.get("slots", [])
+    existing_by_judge = _collect_judge_intervals(base_slots)
 
     no_show_teams = [s.get("team") for s in state.get("no_show_suggestions", []) if s.get("team")]
     if not no_show_teams:
@@ -466,43 +599,56 @@ def generate_no_show_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
         gaps = suggestion.get("gaps", [])
         if not team or not gaps:
             continue
-        top_gap = gaps[0]
-        start = datetime.fromisoformat(top_gap["start"])
-        end = datetime.fromisoformat(top_gap["end"])
-        gap_minutes = int(top_gap.get("minutes", 0))
-        if gap_minutes <= 0:
+        preferred_judge = suggestion.get("judge_id")
+        if preferred_judge:
+            preferred_judge = int(preferred_judge)
+
+        best_overall: Tuple[int, Tuple[datetime, datetime, Dict[str, Any]]] | None = None
+        judge_candidates: Dict[int, Tuple[datetime, datetime, Dict[str, Any]]] = {}
+        for judge_id in range(1, judge_pairs + 1):
+            intervals = existing_by_judge.setdefault(judge_id, [])
+            candidate = _find_best_slot_for_judge(gaps, slot_minutes, intervals, damp_delta)
+            if not candidate:
+                continue
+            judge_candidates[judge_id] = candidate
+            if best_overall is None or candidate[0] < best_overall[1][0]:
+                best_overall = (judge_id, candidate)
+
+        if not best_overall:
             continue
-        slot_end = start + timedelta(minutes=slot_minutes)
-        if slot_end > end:
-            slot_end = end
-        judge_id = suggestion.get("judge_id")
-        if not judge_id:
-            judge_id = random.randint(1, judge_pairs)
+
+        chosen_judge = best_overall[0]
+        chosen_slot = best_overall[1]
+        if preferred_judge and preferred_judge in judge_candidates:
+            preferred_slot = judge_candidates[preferred_judge]
+            if preferred_slot[0] <= chosen_slot[0]:
+                chosen_judge = preferred_judge
+                chosen_slot = preferred_slot
+
+        intervals = existing_by_judge.setdefault(chosen_judge, [])
+        intervals.append((chosen_slot[0], chosen_slot[1]))
+        intervals.sort()
         slots.append(
             {
-                "judge_id": judge_id,
-                "start": start.isoformat(),
-                "end": slot_end.isoformat(),
+                "judge_id": chosen_judge,
+                "start": chosen_slot[0].isoformat(),
+                "end": chosen_slot[1].isoformat(),
                 "team": team,
                 "status": "rescheduled",
-                "between": top_gap.get("between"),
+                "between": chosen_slot[2].get("between"),
             }
         )
 
     if not slots:
         raise HTTPException(status_code=400, detail="No gaps available for no-show teams.")
 
-    schedule_id = _schedule_id("noshow_schedule")
-    schedule_version = _build_schedule_version(
-        schedule_id,
-        "No-show recovery",
+    schedule_id = _upsert_schedule_by_type(
+        state,
         "noshow",
+        _schedule_id("noshow_schedule"),
+        "No-show recovery",
         slots,
     )
-
-    schedules = state.setdefault("schedules", [])
-    schedules.append(schedule_version)
-    state["active_schedule_id"] = schedule_id
-    state["slots"] = slots
+    _set_active_schedule(state, schedule_id, slots)
     _save_state(state)
     return state
