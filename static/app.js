@@ -13,6 +13,9 @@ const endTimeInput = document.getElementById("endTime");
 const matchScheduleInput = document.getElementById("matchSchedule");
 const dropzoneEl = document.getElementById("dropzone");
 const fileInputEl = document.getElementById("fileInput");
+const finalDropzoneEl = document.getElementById("finalDropzone");
+const finalFileInputEl = document.getElementById("finalFileInput");
+const finalMatchScheduleInput = document.getElementById("finalMatchSchedule");
 
 const generateBtn = document.getElementById("generateBtn");
 const printBtn = document.getElementById("printBtn");
@@ -116,6 +119,15 @@ const loadScheduleFile = async (file) => {
   statusEl.textContent = `Loaded ${file.name}.`;
 };
 
+const loadFinalScheduleFile = async (file) => {
+  if (!file || !finalMatchScheduleInput) {
+    return;
+  }
+  const text = await file.text();
+  finalMatchScheduleInput.value = text;
+  statusEl.textContent = `Loaded final schedule ${file.name}.`;
+};
+
 const getActiveSchedule = (state) => {
   if (!state) {
     return null;
@@ -129,6 +141,15 @@ const getActiveSchedule = (state) => {
     return { id: "legacy", label: "Current", slots: state.slots };
   }
   return null;
+};
+
+const canEditActiveSchedule = (state) => {
+  const active = getActiveSchedule(state);
+  const type = active?.type;
+  if (type === "noshow" || type === "printed-noshow") {
+    return Boolean(state?.noshow_locked);
+  }
+  return Boolean(state?.locked);
 };
 
 const getSearchTerm = () => {
@@ -205,6 +226,7 @@ const renderSchedule = (state) => {
   }
 
   const displayMap = searchTerm ? filteredByJudge : byJudge;
+  const actionsEnabled = canEditActiveSchedule(state);
   [...displayMap.entries()].forEach(([judgeId, slots]) => {
     const card = document.createElement("div");
     card.className = "judge-card";
@@ -223,8 +245,8 @@ const renderSchedule = (state) => {
           <span class="badge ${statusClass}">${statusLabel}</span>
         </div>
         <div class="slot-actions">
-          <button class="check" data-team="${slot.team}">Check off</button>
-          <button class="no-show" data-team="${slot.team}">No show</button>
+          <button class="check" data-team="${slot.team}" ${actionsEnabled ? "" : "disabled"}>Check off</button>
+          <button class="no-show" data-team="${slot.team}" ${actionsEnabled ? "" : "disabled"}>No show</button>
         </div>
       `;
       row.querySelector(".check").addEventListener("click", () => updateStatus("checkoff", slot.team));
@@ -364,6 +386,7 @@ const renderNoShow = (state) => {
             <span class="muted">Top gap: ${gaps[0].minutes} min</span>
           </summary>
           <div class="noshow-gaps">
+            <button class="secondary not-competing" data-team="${entry.team}">Not competing</button>
             ${gaps
               .map(
                 (gap) => `
@@ -379,11 +402,22 @@ const renderNoShow = (state) => {
       `;
     })
     .join("");
+
+  noShowEl.querySelectorAll(".not-competing").forEach((button) => {
+    button.addEventListener("click", () => {
+      const team = button.getAttribute("data-team");
+      markNotCompeting(team);
+    });
+  });
 };
 
 const updateStatus = async (endpoint, team) => {
   if (!team) {
     statusEl.textContent = "Cannot update unassigned slot.";
+    return;
+  }
+  if (!canEditActiveSchedule(currentState)) {
+    statusEl.textContent = "Print the schedule before checking off teams.";
     return;
   }
   const response = await fetch(`/api/${endpoint}`, {
@@ -399,6 +433,28 @@ const updateStatus = async (endpoint, team) => {
   renderSchedule(data);
   renderNoShow(data);
   statusEl.textContent = `Updated team ${team}.`;
+};
+
+const markNotCompeting = async (team) => {
+  if (!team) {
+    return;
+  }
+  if (!canEditActiveSchedule(currentState)) {
+    statusEl.textContent = "Print the schedule before updating teams.";
+    return;
+  }
+  const response = await fetch("/api/not-competing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ team }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    statusEl.textContent = data.detail || "Failed to update team.";
+    return;
+  }
+  applyState(data);
+  statusEl.textContent = `Marked team ${team} as not competing.`;
 };
 
 const generateSchedule = async () => {
@@ -434,10 +490,13 @@ const generateSchedule = async () => {
 
 const generateNoShowSchedule = async () => {
   statusEl.textContent = "Generating no-show schedule...";
+  const payload = {
+    match_schedule: finalMatchScheduleInput?.value || "",
+  };
   const response = await fetch("/api/generate-noshow", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify(payload),
   });
 
   const data = await response.json();
@@ -448,6 +507,7 @@ const generateNoShowSchedule = async () => {
   applyState(data);
   statusEl.textContent = "No-show schedule ready.";
 };
+
 
 const loadState = async () => {
   const response = await fetch("/api/state");
@@ -552,6 +612,26 @@ if (dropzoneEl && fileInputEl) {
   fileInputEl.addEventListener("change", (event) => {
     const file = event.target.files?.[0];
     loadScheduleFile(file);
+  });
+}
+if (finalDropzoneEl && finalFileInputEl) {
+  finalDropzoneEl.addEventListener("click", () => finalFileInputEl.click());
+  finalDropzoneEl.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    finalDropzoneEl.classList.add("is-dragging");
+  });
+  finalDropzoneEl.addEventListener("dragleave", () => {
+    finalDropzoneEl.classList.remove("is-dragging");
+  });
+  finalDropzoneEl.addEventListener("drop", (event) => {
+    event.preventDefault();
+    finalDropzoneEl.classList.remove("is-dragging");
+    const file = event.dataTransfer?.files?.[0];
+    loadFinalScheduleFile(file);
+  });
+  finalFileInputEl.addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    loadFinalScheduleFile(file);
   });
 }
 if (!startTimeInput.value) {

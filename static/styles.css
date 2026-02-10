@@ -161,6 +161,18 @@ textarea {
   box-shadow: 0 0 0 2px rgba(242, 159, 88, 0.2);
 }
 
+.final-schedule {
+  margin: 16px 0;
+  display: grid;
+  gap: 12px;
+}
+
+.final-schedule h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text);
+}
+
 button {
   border: none;
   padding: 10px 14px;
@@ -331,6 +343,11 @@ button:disabled {
 
 .noshow-gaps {
   margin-top: 10px;
+}
+
+.not-competing {
+  align-self: flex-start;
+  margin-bottom: 8px;
 }
 
 .noshow .gap {

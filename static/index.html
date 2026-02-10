@@ -97,9 +97,23 @@
 
       <section class="panel">
         <h2>No-show recovery</h2>
-        <button id="generateNoShowBtn" class="secondary" type="button">
-          Generate no-show schedule
-        </button>
+        <div class="final-schedule">
+          <h3>Final match schedule</h3>
+          <div class="dropzone" id="finalDropzone">
+            <input id="finalFileInput" type="file" accept=".json,.log,.txt" />
+            <div class="dropzone-content">
+              <strong>Drop final schedule here</strong>
+              <span>or click to browse</span>
+            </div>
+          </div>
+          <label class="full">
+            Final match schedule
+            <textarea id="finalMatchSchedule" rows="6" readonly></textarea>
+          </label>
+          <button id="generateNoShowBtn" class="secondary" type="button">
+            Generate no-show schedule
+          </button>
+        </div>
         <div id="noShowPanel" class="noshow"></div>
       </section>
     </main>

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -16,10 +17,10 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATE_PATH = DATA_DIR / "state.json"
 STATIC_DIR = BASE_DIR / "static"
+MATCH_TZ = ZoneInfo("America/Chicago")
 
 app = FastAPI(title="VEX Judging Scheduler")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
 
 @dataclass
 class Slot:
@@ -29,28 +30,23 @@ class Slot:
     team: str | None = None
     status: str = "scheduled"
 
-
 def _load_state() -> Dict[str, Any]:
     if STATE_PATH.exists():
         return json.loads(STATE_PATH.read_text())
     return {}
 
-
 def _save_state(state: Dict[str, Any]) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2))
-
 
 def _schedule_id(prefix: str) -> str:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return f"{prefix}-{stamp}"
-
 
 def _save_schedule_file(schedule_id: str, slots: List[Dict[str, Any]]) -> str:
     filename = f"{schedule_id}.json"
     path = DATA_DIR / filename
     path.write_text(json.dumps({"id": schedule_id, "slots": slots}, indent=2))
     return filename
-
 
 def _parse_matches(raw_text: str) -> List[Dict[str, Any]]:
     try:
@@ -69,7 +65,6 @@ def _parse_matches(raw_text: str) -> List[Dict[str, Any]]:
     array_text = "[" + match.group(1) + "]"
     return json.loads(array_text)
 
-
 def _match_label(match_info: Dict[str, Any]) -> str:
     match_tuple = match_info.get("matchTuple", {})
     round_name = str(match_tuple.get("round", "")).upper()
@@ -82,7 +77,6 @@ def _match_label(match_info: Dict[str, Any]) -> str:
         return f"Match {match_num}"
     return "Match"
 
-
 def _extract_team_matches(matches: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     team_matches: Dict[str, List[Dict[str, Any]]] = {}
     for match in matches:
@@ -90,7 +84,7 @@ def _extract_team_matches(matches: List[Dict[str, Any]]) -> Dict[str, List[Dict[
         time_scheduled = info.get("timeScheduled")
         if time_scheduled is None:
             continue
-        match_time = datetime.fromtimestamp(int(time_scheduled), tz=timezone.utc)
+        match_time = datetime.fromtimestamp(int(time_scheduled), tz=MATCH_TZ)
         label = _match_label(info)
         alliances = info.get("alliances", [])
         for alliance in alliances:
@@ -105,7 +99,6 @@ def _extract_team_matches(matches: List[Dict[str, Any]]) -> Dict[str, List[Dict[
         matches_list.sort(key=lambda m: m["time"])
     return team_matches
 
-
 def _build_slots(
     judge_pairs: int,
     start_time: datetime,
@@ -117,10 +110,21 @@ def _build_slots(
     for judge_id in range(1, judge_pairs + 1):
         for i in range(total_slots_per_judge):
             slot_start = start_time + timedelta(minutes=i * slot_minutes)
-            slot_end = slot_start + timedelta(minutes=slot_minutes)
-            slots.append(Slot(judge_id=judge_id, start=slot_start, end=slot_end))
+            snapped_start = _snap_to_five(slot_start)
+            slot_end = snapped_start + timedelta(minutes=slot_minutes)
+            slots.append(Slot(judge_id=judge_id, start=snapped_start, end=slot_end))
     return slots
 
+
+def _snap_to_five(value: datetime) -> datetime:
+    remainder = value.minute % 5
+    if remainder == 0 and value.second == 0 and value.microsecond == 0:
+        return value
+    minutes_to_add = 5 - remainder
+    if minutes_to_add == 5:
+        minutes_to_add = 0
+    rounded = value + timedelta(minutes=minutes_to_add)
+    return rounded.replace(second=0, microsecond=0)
 
 def _parse_time(raw_time: str, label: str) -> datetime:
     time_text = raw_time.strip()
@@ -238,6 +242,23 @@ def _get_active_schedule(state: Dict[str, Any]) -> Dict[str, Any] | None:
         (schedule for schedule in state.get("schedules", []) if schedule.get("id") == active_id),
         None,
     )
+
+
+def _require_printed_for_actions(state: Dict[str, Any]) -> None:
+    active_schedule = _get_active_schedule(state)
+    schedule_type = active_schedule.get("type") if active_schedule else None
+    if schedule_type in {"noshow", "printed-noshow"}:
+        if not state.get("noshow_locked"):
+            raise HTTPException(
+                status_code=400,
+                detail="Print the no-show schedule before checking off teams.",
+            )
+        return
+    if not state.get("locked"):
+        raise HTTPException(
+            status_code=400,
+            detail="Print the schedule before checking off teams.",
+        )
 
 
 def _set_active_schedule(state: Dict[str, Any], schedule_id: str, slots: List[Dict[str, Any]]) -> None:
@@ -403,16 +424,92 @@ def _find_best_slot_for_judge(
             best = (candidate[0], candidate[1], gap)
     return best
 
+def _build_no_show_schedule(state: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    config = state.get("config", {})
+    slot_minutes = int(config.get("slot_minutes", 10))
+    judge_pairs = int(config.get("judge_pairs", 1))
+    block_minutes = int(config.get("block_minutes", 0))
+    damp_delta = timedelta(minutes=block_minutes / 2) if block_minutes > 0 else timedelta(0)
+
+    active_schedule = _get_active_schedule(state)
+    base_slots = active_schedule.get("slots", []) if active_schedule else state.get("slots", [])
+    existing_by_judge = _collect_judge_intervals(base_slots)
+
+    suggestions = [s for s in state.get("no_show_suggestions", []) if s.get("team")]
+    no_show_teams = [s.get("team") for s in suggestions]
+    if not no_show_teams:
+        return [], {}
+
+    slots: List[Dict[str, Any]] = []
+    judge_ids = list(range(1, judge_pairs + 1))
+    target_per_judge = max(1, len(no_show_teams) // judge_pairs)
+    remainder = len(no_show_teams) % judge_pairs
+    extra_judges = set(random.sample(judge_ids, remainder)) if remainder else set()
+    judge_targets = {
+        judge_id: target_per_judge + (1 if judge_id in extra_judges else 0)
+        for judge_id in judge_ids
+    }
+    judge_counts = {judge_id: 0 for judge_id in judge_ids}
+    assigned_judges: Dict[str, int] = {}
+
+    for suggestion in suggestions:
+        team = suggestion.get("team")
+        gaps = suggestion.get("gaps", [])
+        if not team or not gaps:
+            continue
+
+        best_overall: Tuple[int, Tuple[datetime, datetime, Dict[str, Any]]] | None = None
+        for judge_id in judge_ids:
+            if judge_counts[judge_id] >= judge_targets[judge_id]:
+                continue
+            intervals = existing_by_judge.setdefault(judge_id, [])
+            candidate = _find_best_slot_for_judge(gaps, slot_minutes, intervals, damp_delta)
+            if not candidate:
+                continue
+            if best_overall is None or candidate[0] < best_overall[1][0]:
+                best_overall = (judge_id, candidate)
+
+        if not best_overall:
+            for judge_id in judge_ids:
+                intervals = existing_by_judge.setdefault(judge_id, [])
+                candidate = _find_best_slot_for_judge(gaps, slot_minutes, intervals, damp_delta)
+                if not candidate:
+                    continue
+                if best_overall is None or candidate[0] < best_overall[1][0]:
+                    best_overall = (judge_id, candidate)
+
+        if not best_overall:
+            continue
+
+        chosen_judge = best_overall[0]
+        chosen_slot = best_overall[1]
+
+        intervals = existing_by_judge.setdefault(chosen_judge, [])
+        intervals.append((chosen_slot[0], chosen_slot[1]))
+        intervals.sort()
+        judge_counts[chosen_judge] += 1
+        assigned_judges[team] = chosen_judge
+        slots.append(
+            {
+                "judge_id": chosen_judge,
+                "start": chosen_slot[0].isoformat(),
+                "end": chosen_slot[1].isoformat(),
+                "team": team,
+                "status": "rescheduled",
+                "between": chosen_slot[2].get("between"),
+            }
+        )
+
+    return slots, assigned_judges
+
 
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
-
 @app.get("/api/state")
 def get_state() -> Dict[str, Any]:
     return _load_state()
-
 
 @app.post("/api/generate")
 def generate(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -476,6 +573,8 @@ def generate(payload: Dict[str, Any]) -> Dict[str, Any]:
         "locked": False,
         "noshow_locked": False,
         "team_count": len(teams),
+        "final_match_teams": [],
+        "not_competing": [],
         "slots": slot_payload,
         "active_schedule_id": schedule_id,
         "schedules": [schedule_version],
@@ -492,11 +591,12 @@ def generate(payload: Dict[str, Any]) -> Dict[str, Any]:
         no_show_suggestions: List[Dict[str, Any]] = []
         for team in unassigned:
             matches = _normalize_match_entries(team_matches.get(team, []))
-            if not matches:
-                continue
-            no_show_suggestions.append(_build_no_show_suggestion(team, matches))
-        state["no_shows"] = unassigned
+            suggestion = _build_no_show_suggestion(team, matches)
+            no_show_suggestions.append(suggestion)
         state["no_show_suggestions"] = no_show_suggestions
+        state["last_suggestions"] = no_show_suggestions[-1]
+    else:
+        state.pop("last_suggestions", None)
 
     _save_state(state)
     return state
@@ -508,42 +608,72 @@ def checkoff(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not team:
         raise HTTPException(status_code=400, detail="Missing team.")
     state = _load_state()
+    _require_printed_for_actions(state)
+
     judge_id = _update_slot_status(state, team, "checked")
-    if judge_id is not None:
-        state["no_shows"] = [t for t in state.get("no_shows", []) if t != team]
-        state["no_show_suggestions"] = [
-            s for s in state.get("no_show_suggestions", []) if s.get("team") != team
-        ]
-        if state.get("last_suggestions", {}).get("team") == team:
-            state.pop("last_suggestions", None)
-        _save_state(state)
-        return state
-    raise HTTPException(status_code=404, detail="Team not found in slots.")
+    if judge_id is None:
+        raise HTTPException(status_code=404, detail="Team not found.")
+
+    state["no_shows"] = [t for t in state.get("no_shows", []) if t != team]
+    state["no_show_suggestions"] = [
+        s for s in state.get("no_show_suggestions", []) if s.get("team") != team
+    ]
+    if state.get("last_suggestions", {}).get("team") == team:
+        state.pop("last_suggestions", None)
+
+    _save_state(state)
+    return state
 
 
 @app.post("/api/noshow")
-def no_show(payload: Dict[str, Any]) -> Dict[str, Any]:
+def noshow(payload: Dict[str, Any]) -> Dict[str, Any]:
     team = str(payload.get("team", "")).strip()
     if not team:
         raise HTTPException(status_code=400, detail="Missing team.")
-
     state = _load_state()
-    _update_slot_status(state, team, "no-show")
-    state.setdefault("no_shows", []).append(team)
+    _require_printed_for_actions(state)
+
+    judge_id = _update_slot_status(state, team, "no-show")
+    if judge_id is None:
+        raise HTTPException(status_code=404, detail="Team not found.")
+
+    state.setdefault("no_shows", [])
+    if team not in state["no_shows"]:
+        state["no_shows"].append(team)
+
+    state["not_competing"] = [t for t in state.get("not_competing", []) if t != team]
 
     team_matches = state.get("team_matches", {}).get(team, [])
-    if not team_matches:
-        team_times = state.get("team_times", {}).get(team, [])
-        team_matches = [{"time": datetime.fromisoformat(t), "label": "Match"} for t in team_times]
-    else:
-        team_matches = _normalize_match_entries(team_matches)
+    normalized_matches = _normalize_match_entries(team_matches)
+    suggestion = _build_no_show_suggestion(team, normalized_matches)
 
-    suggestion = _build_no_show_suggestion(team, team_matches)
-
-    suggestions = state.setdefault("no_show_suggestions", [])
-    state["no_show_suggestions"] = [s for s in suggestions if s.get("team") != team]
+    state["no_show_suggestions"] = [
+        s for s in state.get("no_show_suggestions", []) if s.get("team") != team
+    ]
     state["no_show_suggestions"].append(suggestion)
     state["last_suggestions"] = suggestion
+
+    _save_state(state)
+    return state
+
+
+@app.post("/api/not-competing")
+def not_competing(payload: Dict[str, Any]) -> Dict[str, Any]:
+    team = str(payload.get("team", "")).strip()
+    if not team:
+        raise HTTPException(status_code=400, detail="Missing team.")
+    state = _load_state()
+    _require_printed_for_actions(state)
+
+    state["no_shows"] = [t for t in state.get("no_shows", []) if t != team]
+    state["no_show_suggestions"] = [
+        s for s in state.get("no_show_suggestions", []) if s.get("team") != team
+    ]
+    if state.get("last_suggestions", {}).get("team") == team:
+        state.pop("last_suggestions", None)
+    state.setdefault("not_competing", [])
+    if team not in state["not_competing"]:
+        state["not_competing"].append(team)
 
     _save_state(state)
     return state
@@ -628,6 +758,7 @@ def generate_no_show_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="No no-show teams to schedule.")
 
     slots: List[Dict[str, Any]] = []
+    assigned_judges: Dict[str, int] = {}
     judge_ids = list(range(1, judge_pairs + 1))
     target_per_judge = max(1, len(no_show_teams) // judge_pairs)
     remainder = len(no_show_teams) % judge_pairs
@@ -672,6 +803,7 @@ def generate_no_show_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
         intervals.append((chosen_slot[0], chosen_slot[1]))
         intervals.sort()
         judge_counts[chosen_judge] += 1
+        assigned_judges[team] = chosen_judge
         slots.append(
             {
                 "judge_id": chosen_judge,
@@ -685,6 +817,11 @@ def generate_no_show_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     if not slots:
         raise HTTPException(status_code=400, detail="No gaps available for no-show teams.")
+
+    for suggestion in state.get("no_show_suggestions", []):
+        team = suggestion.get("team")
+        if team in assigned_judges:
+            suggestion["judge_id"] = assigned_judges[team]
 
     schedule_id = _upsert_schedule_by_type(
         state,
