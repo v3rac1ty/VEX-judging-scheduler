@@ -3,17 +3,24 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Virtual environments
 .venv/
 venv/
 ENV/
+.env
 
 # Runtime data
 /data/*.json
 
 # OS files
 .DS_Store
+
+# Editor settings
+.vscode/
 
 # Logs
 *.log
