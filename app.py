@@ -122,10 +122,10 @@ def _build_slots(
     return slots
 
 
-def _parse_start_time(raw_time: str) -> datetime:
+def _parse_time(raw_time: str, label: str) -> datetime:
     time_text = raw_time.strip()
     if not time_text:
-        raise ValueError("Missing judging start time.")
+        raise ValueError(f"Missing {label}.")
 
     today = datetime.now().astimezone()
     tzinfo = today.tzinfo
@@ -136,7 +136,7 @@ def _parse_start_time(raw_time: str) -> datetime:
         minute = int(match.group(2))
         meridiem = match.group(3).lower()
         if hour < 1 or hour > 12 or minute > 59:
-            raise ValueError("Invalid judging start time.")
+            raise ValueError(f"Invalid {label}.")
         if meridiem == "pm" and hour != 12:
             hour += 12
         if meridiem == "am" and hour == 12:
@@ -161,7 +161,7 @@ def _parse_start_time(raw_time: str) -> datetime:
             tzinfo=tzinfo,
         )
     except ValueError as exc:
-        raise ValueError("Judging start time must be like 9:00 AM.") from exc
+        raise ValueError(f"{label.capitalize()} must be like 9:00 AM.") from exc
 
 
 def _team_sort_key(team: str) -> Tuple[int, str]:
@@ -317,6 +317,39 @@ def _compute_gaps_sorted(
     return gaps
 
 
+def _build_no_show_suggestion(
+    team: str,
+    team_matches: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    gaps = _compute_gaps_sorted(team_matches)
+    return {
+        "team": team,
+        "judge_id": None,
+        "gaps": [
+            {
+                "start": g["start"].isoformat(),
+                "end": g["end"].isoformat(),
+                "minutes": g["minutes"],
+                "between": g["between"],
+            }
+            for g in gaps
+        ],
+    }
+
+
+def _normalize_match_entries(match_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for entry in match_entries:
+        time_value = entry.get("time")
+        if isinstance(time_value, datetime):
+            match_time = time_value
+        else:
+            match_time = datetime.fromisoformat(str(time_value))
+        normalized.append({"time": match_time, "label": entry.get("label", "Match")})
+    normalized.sort(key=lambda m: m["time"])
+    return normalized
+
+
 def _collect_judge_intervals(slots: List[Dict[str, Any]]) -> Dict[int, List[Tuple[datetime, datetime]]]:
     by_judge: Dict[int, List[Tuple[datetime, datetime]]] = {}
     for slot in slots:
@@ -389,12 +422,19 @@ def generate(payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
         judge_pairs = int(payload.get("judge_pairs", 4))
         slot_minutes = int(payload.get("slot_minutes", 10))
-        duration_minutes = int(payload.get("duration_minutes", 100))
         block_minutes = int(payload.get("block_minutes", 8))
-        start_time = _parse_start_time(payload.get("start_time", ""))
+        start_time = _parse_time(payload.get("start_time", ""), "judging start time")
+        end_time = _parse_time(payload.get("end_time", ""), "judging end time")
         raw_schedule = payload.get("match_schedule", "")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    duration_minutes = int((end_time - start_time).total_seconds() / 60)
+    if duration_minutes <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Judging end time must be after the start time.",
+        )
 
     try:
         matches = _parse_matches(raw_schedule)
@@ -431,9 +471,11 @@ def generate(payload: Dict[str, Any]) -> Dict[str, Any]:
             "duration_minutes": duration_minutes,
             "block_minutes": block_minutes,
             "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
         },
         "locked": False,
         "noshow_locked": False,
+        "team_count": len(teams),
         "slots": slot_payload,
         "active_schedule_id": schedule_id,
         "schedules": [schedule_version],
@@ -445,6 +487,16 @@ def generate(payload: Dict[str, Any]) -> Dict[str, Any]:
         "no_shows": [],
         "no_show_suggestions": [],
     }
+
+    if unassigned:
+        no_show_suggestions: List[Dict[str, Any]] = []
+        for team in unassigned:
+            matches = _normalize_match_entries(team_matches.get(team, []))
+            if not matches:
+                continue
+            no_show_suggestions.append(_build_no_show_suggestion(team, matches))
+        state["no_shows"] = unassigned
+        state["no_show_suggestions"] = no_show_suggestions
 
     _save_state(state)
     return state
@@ -476,35 +528,17 @@ def no_show(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Missing team.")
 
     state = _load_state()
-    judge_id = _update_slot_status(state, team, "no-show")
+    _update_slot_status(state, team, "no-show")
     state.setdefault("no_shows", []).append(team)
 
     team_matches = state.get("team_matches", {}).get(team, [])
     if not team_matches:
         team_times = state.get("team_times", {}).get(team, [])
-        team_matches = [
-            {"time": datetime.fromisoformat(t), "label": "Match"} for t in team_times
-        ]
+        team_matches = [{"time": datetime.fromisoformat(t), "label": "Match"} for t in team_times]
     else:
-        team_matches = [
-            {"time": datetime.fromisoformat(m["time"]), "label": m.get("label", "Match")}
-            for m in team_matches
-        ]
+        team_matches = _normalize_match_entries(team_matches)
 
-    gaps = _compute_gaps_sorted(team_matches)
-    suggestion = {
-        "team": team,
-        "judge_id": judge_id,
-        "gaps": [
-            {
-                "start": g["start"].isoformat(),
-                "end": g["end"].isoformat(),
-                "minutes": g["minutes"],
-                "between": g["between"],
-            }
-            for g in gaps
-        ],
-    }
+    suggestion = _build_no_show_suggestion(team, team_matches)
 
     suggestions = state.setdefault("no_show_suggestions", [])
     state["no_show_suggestions"] = [s for s in suggestions if s.get("team") != team]
@@ -594,40 +628,50 @@ def generate_no_show_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="No no-show teams to schedule.")
 
     slots: List[Dict[str, Any]] = []
+    judge_ids = list(range(1, judge_pairs + 1))
+    target_per_judge = max(1, len(no_show_teams) // judge_pairs)
+    remainder = len(no_show_teams) % judge_pairs
+    extra_judges = set(random.sample(judge_ids, remainder)) if remainder else set()
+    judge_targets = {
+        judge_id: target_per_judge + (1 if judge_id in extra_judges else 0)
+        for judge_id in judge_ids
+    }
+    judge_counts = {judge_id: 0 for judge_id in judge_ids}
     for suggestion in state.get("no_show_suggestions", []):
         team = suggestion.get("team")
         gaps = suggestion.get("gaps", [])
         if not team or not gaps:
             continue
-        preferred_judge = suggestion.get("judge_id")
-        if preferred_judge:
-            preferred_judge = int(preferred_judge)
-
         best_overall: Tuple[int, Tuple[datetime, datetime, Dict[str, Any]]] | None = None
-        judge_candidates: Dict[int, Tuple[datetime, datetime, Dict[str, Any]]] = {}
-        for judge_id in range(1, judge_pairs + 1):
+        for judge_id in judge_ids:
+            if judge_counts[judge_id] >= judge_targets[judge_id]:
+                continue
             intervals = existing_by_judge.setdefault(judge_id, [])
             candidate = _find_best_slot_for_judge(gaps, slot_minutes, intervals, damp_delta)
             if not candidate:
                 continue
-            judge_candidates[judge_id] = candidate
             if best_overall is None or candidate[0] < best_overall[1][0]:
                 best_overall = (judge_id, candidate)
+
+        if not best_overall:
+            for judge_id in judge_ids:
+                intervals = existing_by_judge.setdefault(judge_id, [])
+                candidate = _find_best_slot_for_judge(gaps, slot_minutes, intervals, damp_delta)
+                if not candidate:
+                    continue
+                if best_overall is None or candidate[0] < best_overall[1][0]:
+                    best_overall = (judge_id, candidate)
 
         if not best_overall:
             continue
 
         chosen_judge = best_overall[0]
         chosen_slot = best_overall[1]
-        if preferred_judge and preferred_judge in judge_candidates:
-            preferred_slot = judge_candidates[preferred_judge]
-            if preferred_slot[0] <= chosen_slot[0]:
-                chosen_judge = preferred_judge
-                chosen_slot = preferred_slot
 
         intervals = existing_by_judge.setdefault(chosen_judge, [])
         intervals.append((chosen_slot[0], chosen_slot[1]))
         intervals.sort()
+        judge_counts[chosen_judge] += 1
         slots.append(
             {
                 "judge_id": chosen_judge,

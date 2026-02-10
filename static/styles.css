@@ -135,6 +135,32 @@ textarea {
   margin-bottom: 16px;
 }
 
+.dropzone {
+  border: 1px dashed #2e303a;
+  border-radius: 16px;
+  padding: 18px;
+  text-align: center;
+  color: var(--muted);
+  background: #15161c;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.dropzone input {
+  display: none;
+}
+
+.dropzone-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dropzone.is-dragging {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(242, 159, 88, 0.2);
+}
+
 button {
   border: none;
   padding: 10px 14px;
@@ -376,6 +402,15 @@ button:disabled {
     width: 100%;
     border-collapse: collapse;
     font-size: 12px;
+  }
+
+  .print-table-section {
+    margin-bottom: 18px;
+  }
+
+  .print-table-section h3 {
+    margin: 0 0 8px;
+    font-size: 14px;
   }
 
   .print-table th,

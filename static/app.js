@@ -7,10 +7,12 @@ const teamSearchInput = document.getElementById("teamSearch");
 
 const judgePairsInput = document.getElementById("judgePairs");
 const slotMinutesInput = document.getElementById("slotMinutes");
-const durationMinutesInput = document.getElementById("durationMinutes");
 const blockMinutesInput = document.getElementById("blockMinutes");
 const startTimeInput = document.getElementById("startTime");
+const endTimeInput = document.getElementById("endTime");
 const matchScheduleInput = document.getElementById("matchSchedule");
+const dropzoneEl = document.getElementById("dropzone");
+const fileInputEl = document.getElementById("fileInput");
 
 const generateBtn = document.getElementById("generateBtn");
 const printBtn = document.getElementById("printBtn");
@@ -35,18 +37,83 @@ const updateLockState = (state) => {
   }
 };
 
-const nowLocalInput = () => {
-  const now = new Date();
-  return now.toLocaleTimeString([], {
+const applyState = (state) => {
+  currentState = state;
+  updateLockState(state);
+  renderSchedule(state);
+  renderScheduleSelect(state);
+  renderNoShow(state);
+};
+
+const formatTime = (date) =>
+  date.toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
   });
+
+const nowLocalInput = () => formatTime(new Date());
+
+const futureLocalInput = (minutesAhead) => {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() + minutesAhead);
+  return formatTime(date);
 };
 
 const toLocalTime = (isoString) => {
   const date = new Date(isoString);
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
+
+const parseQualsStartTime = (text) => {
+  const match = text.match(/Quals\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))/i);
+  if (!match) {
+    return null;
+  }
+  const timeText = match[1].toLowerCase().replace(/\s+/g, "");
+  const timeMatch = timeText.match(/^(\d{1,2})(?::(\d{2}))?(am|pm)$/);
+  if (!timeMatch) {
+    return null;
+  }
+  let hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2] || "0");
+  const meridiem = timeMatch[3];
+  if (hour < 1 || hour > 12 || minute > 59) {
+    return null;
+  }
+  if (meridiem === "pm" && hour !== 12) {
+    hour += 12;
+  }
+  if (meridiem === "am" && hour === 12) {
+    hour = 0;
+  }
+  const date = new Date();
+  date.setHours(hour, minute, 0, 0);
+  return date;
+};
+
+const updateJudgingTimesFromFile = (text) => {
+  const qualsStart = parseQualsStartTime(text);
+  if (!qualsStart) {
+    return;
+  }
+  if (endTimeInput) {
+    endTimeInput.value = formatTime(qualsStart);
+  }
+  if (startTimeInput) {
+    const start = new Date(qualsStart.getTime() - 100 * 60000);
+    startTimeInput.value = formatTime(start);
+  }
+};
+
+const loadScheduleFile = async (file) => {
+  if (!file) {
+    return;
+  }
+  const text = await file.text();
+  matchScheduleInput.value = text;
+  updateJudgingTimesFromFile(text);
+  statusEl.textContent = `Loaded ${file.name}.`;
 };
 
 const getActiveSchedule = (state) => {
@@ -151,6 +218,7 @@ const renderSchedule = (state) => {
       row.innerHTML = `
         <div>
           <div><strong>${slot.team || "Unassigned"}</strong></div>
+          ${slot.between ? `<div class="muted">${slot.between}</div>` : ""}
           <div>${toLocalTime(slot.start)} - ${toLocalTime(slot.end)}</div>
           <span class="badge ${statusClass}">${statusLabel}</span>
         </div>
@@ -180,6 +248,9 @@ const renderPrintTable = (state, byJudge) => {
     return;
   }
 
+  const active = getActiveSchedule(state);
+  const isNoShow = active?.type === "noshow" || active?.type === "printed-noshow";
+
   const judgeIds = [...byJudge.keys()].sort((a, b) => a - b);
   const slotCounts = judgeIds.map((id) => byJudge.get(id)?.length || 0);
   const rowCount = Math.max(...slotCounts, 0);
@@ -189,6 +260,42 @@ const renderPrintTable = (state, byJudge) => {
     const time = rowSlots[0] ? `${toLocalTime(rowSlots[0].start)} - ${toLocalTime(rowSlots[0].end)}` : "";
     return { time, index: idx };
   });
+
+  if (isNoShow) {
+    printTableEl.innerHTML = judgeIds
+      .map((id) => {
+        const slots = byJudge.get(id) || [];
+        return `
+          <div class="print-table-section">
+            <h3>Judge Pair ${id}</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Team</th>
+                  <th>Between</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${slots
+                  .map(
+                    (slot) => `
+                  <tr>
+                    <td>${toLocalTime(slot.start)} - ${toLocalTime(slot.end)}</td>
+                    <td>${slot.team || ""}</td>
+                    <td>${slot.between || ""}</td>
+                  </tr>
+                `
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        `;
+      })
+      .join("");
+    return;
+  }
 
   const header = `
     <thead>
@@ -299,9 +406,9 @@ const generateSchedule = async () => {
   const payload = {
     judge_pairs: judgePairsInput.value,
     slot_minutes: slotMinutesInput.value,
-    duration_minutes: durationMinutesInput.value,
     block_minutes: blockMinutesInput.value,
     start_time: startTimeInput.value,
+    end_time: endTimeInput.value,
     match_schedule: matchScheduleInput.value,
   };
 
@@ -316,13 +423,10 @@ const generateSchedule = async () => {
     statusEl.textContent = data.detail || "Failed to generate schedule.";
     return;
   }
-  currentState = data;
-  updateLockState(data);
-  renderSchedule(data);
-  renderScheduleSelect(data);
-  renderNoShow(data);
+  applyState(data);
   if (data.unassigned?.length) {
-    statusEl.textContent = `Generated with ${data.unassigned.length} unassigned teams.`;
+    const totalTeams = data.team_count ?? "some";
+    statusEl.textContent = `Error: scheduled ${totalTeams - data.unassigned.length} of ${totalTeams} teams. ${data.unassigned.length} unassigned.`;
   } else {
     statusEl.textContent = "Schedule ready.";
   }
@@ -341,11 +445,7 @@ const generateNoShowSchedule = async () => {
     statusEl.textContent = data.detail || "Failed to generate no-show schedule.";
     return;
   }
-  currentState = data;
-  updateLockState(data);
-  renderSchedule(data);
-  renderScheduleSelect(data);
-  renderNoShow(data);
+  applyState(data);
   statusEl.textContent = "No-show schedule ready.";
 };
 
@@ -353,11 +453,7 @@ const loadState = async () => {
   const response = await fetch("/api/state");
   const data = await response.json();
   if (data && data.slots) {
-    currentState = data;
-    updateLockState(data);
-    renderSchedule(data);
-    renderScheduleSelect(data);
-    renderNoShow(data);
+    applyState(data);
   } else {
     scheduleEl.innerHTML = "<p>No schedule loaded.</p>";
     if (printTableEl) {
@@ -369,6 +465,7 @@ const loadState = async () => {
       scheduleSelect.disabled = true;
     }
     updateLockState(null);
+    currentState = null;
   }
 };
 
@@ -407,11 +504,7 @@ const setActiveSchedule = async () => {
     statusEl.textContent = data.detail || "Failed to switch schedule.";
     return;
   }
-  currentState = data;
-  updateLockState(data);
-  renderSchedule(data);
-  renderScheduleSelect(data);
-  renderNoShow(data);
+  applyState(data);
 };
 
 const printSchedule = async () => {
@@ -429,10 +522,7 @@ const printSchedule = async () => {
     statusEl.textContent = data.detail || "Failed to snapshot schedule.";
     return;
   }
-  currentState = data;
-  updateLockState(data);
-  renderSchedule(data);
-  renderScheduleSelect(data);
+  applyState(data);
   window.print();
 };
 
@@ -444,7 +534,30 @@ resetBtn.addEventListener("click", resetAll);
 if (teamSearchInput) {
   teamSearchInput.addEventListener("input", () => renderSchedule(currentState));
 }
+if (dropzoneEl && fileInputEl) {
+  dropzoneEl.addEventListener("click", () => fileInputEl.click());
+  dropzoneEl.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    dropzoneEl.classList.add("is-dragging");
+  });
+  dropzoneEl.addEventListener("dragleave", () => {
+    dropzoneEl.classList.remove("is-dragging");
+  });
+  dropzoneEl.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dropzoneEl.classList.remove("is-dragging");
+    const file = event.dataTransfer?.files?.[0];
+    loadScheduleFile(file);
+  });
+  fileInputEl.addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    loadScheduleFile(file);
+  });
+}
 if (!startTimeInput.value) {
   startTimeInput.value = nowLocalInput();
+}
+if (endTimeInput && !endTimeInput.value) {
+  endTimeInput.value = futureLocalInput(100);
 }
 loadState();

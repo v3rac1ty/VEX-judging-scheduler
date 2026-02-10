@@ -38,8 +38,13 @@
             <input id="slotMinutes" type="number" min="1" value="10" />
           </label>
           <label>
-            Window length (min)
-            <input id="durationMinutes" type="number" min="1" value="100" />
+            Judging end time
+            <input
+              id="endTime"
+              type="text"
+              inputmode="numeric"
+              placeholder="10:40 AM"
+            />
           </label>
           <label>
             Match block (min)
@@ -55,9 +60,16 @@
             />
           </label>
         </div>
+        <div class="dropzone" id="dropzone">
+          <input id="fileInput" type="file" accept=".json,.log,.txt" />
+          <div class="dropzone-content">
+            <strong>Drop a .json or .log file here</strong>
+            <span>or click to browse</span>
+          </div>
+        </div>
         <label class="full">
           Match schedule JSON or log
-          <textarea id="matchSchedule" rows="10"></textarea>
+          <textarea id="matchSchedule" rows="10" readonly></textarea>
         </label>
         <div class="actions">
           <button id="generateBtn" class="primary">Generate schedule</button>
