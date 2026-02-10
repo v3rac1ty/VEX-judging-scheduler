@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VEX Judging Scheduler</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=Space+Grotesk:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="bg-gradient"></div>
+    <header class="hero">
+      <div class="hero-content">
+        <p class="eyebrow">Inspection Period Planner</p>
+        <h1>VEX Judging Scheduler</h1>
+        <p class="subtitle">
+          Build a judging schedule around match times, track check-ins, and
+          recover from no-shows in seconds.
+        </p>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <h2>Setup</h2>
+        <div class="grid">
+          <label>
+            Judge pairs
+            <input id="judgePairs" type="number" min="1" value="4" />
+          </label>
+          <label>
+            Slot length (min)
+            <input id="slotMinutes" type="number" min="1" value="10" />
+          </label>
+          <label>
+            Window length (min)
+            <input id="durationMinutes" type="number" min="1" value="100" />
+          </label>
+          <label>
+            Match block (min)
+            <input id="blockMinutes" type="number" min="1" value="8" />
+          </label>
+          <label>
+            Judging start time
+            <input
+              id="startTime"
+              type="text"
+              inputmode="numeric"
+              placeholder="9:00 AM"
+            />
+          </label>
+        </div>
+        <label class="full">
+          Match schedule JSON or log
+          <textarea id="matchSchedule" rows="10"></textarea>
+        </label>
+        <div class="actions">
+          <button id="generateBtn" class="primary">Generate schedule</button>
+          <button id="printBtn" class="secondary" type="button">Print schedule</button>
+        </div>
+        <div id="status" class="status"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Schedule</h2>
+        <div class="schedule-toolbar">
+          <label>
+            View schedule
+            <select id="scheduleSelect"></select>
+          </label>
+        </div>
+        <div id="schedule" class="schedule"></div>
+        <div id="printTable" class="print-table"></div>
+      </section>
+
+      <section class="panel">
+        <h2>No-show recovery</h2>
+        <button id="generateNoShowBtn" class="secondary" type="button">
+          Generate no-show schedule
+        </button>
+        <div id="noShowPanel" class="noshow"></div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Built for fast, accurate inspection-period judging.</p>
+    </footer>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
