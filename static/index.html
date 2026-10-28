@@ -6,10 +6,19 @@
     <title>VEX Judging Scheduler</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Non-blocking: if the event network has no internet, the page still renders with system fonts. -->
     <link
       href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=Space+Grotesk:wght@400;500;600&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=Space+Grotesk:wght@400;500;600&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -151,6 +160,6 @@
       <p>Built for fast, accurate inspection-period judging.</p>
     </footer>
 
-    <script src="/static/app.js"></script>
+    <script type="module" src="/static/js/main.js"></script>
   </body>
 </html>
