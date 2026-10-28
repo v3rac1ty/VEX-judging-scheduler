@@ -4,7 +4,7 @@ import json
 import random
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from zoneinfo import ZoneInfo
@@ -393,15 +393,18 @@ def _find_slot_in_gap(
 ) -> Tuple[datetime, datetime] | None:
     start = gap_start
     slot_delta = timedelta(minutes=slot_minutes)
+    interval_index = 0
+
     while start + slot_delta <= gap_end:
         end = start + slot_delta
-        conflict = next(
-            (interval for interval in intervals if start < interval[1] and end > interval[0]),
-            None,
-        )
-        if not conflict:
+
+        while interval_index < len(intervals) and intervals[interval_index][1] <= start:
+            interval_index += 1
+
+        if interval_index >= len(intervals) or intervals[interval_index][0] >= end:
             return start, end
-        start = conflict[1]
+
+        start = intervals[interval_index][1]
     return None
 
 
@@ -435,7 +438,15 @@ def _build_no_show_schedule(state: Dict[str, Any]) -> Tuple[List[Dict[str, Any]]
     base_slots = active_schedule.get("slots", []) if active_schedule else state.get("slots", [])
     existing_by_judge = _collect_judge_intervals(base_slots)
 
-    suggestions = [s for s in state.get("no_show_suggestions", []) if s.get("team")]
+    not_competing_set = set(state.get("not_competing", []))
+    final_match_teams = set(state.get("final_match_teams", []))
+    suggestions = [
+        s for s in state.get("no_show_suggestions", [])
+        if s.get("team")
+        and not s.get("not_in_schedule")
+        and s.get("team") not in not_competing_set
+        and (not final_match_teams or s.get("team") in final_match_teams)
+    ]
     no_show_teams = [s.get("team") for s in suggestions]
     if not no_show_teams:
         return [], {}
@@ -503,6 +514,93 @@ def _build_no_show_schedule(state: Dict[str, Any]) -> Tuple[List[Dict[str, Any]]
     return slots, assigned_judges
 
 
+def _apply_no_show_schedule(
+    state: Dict[str, Any],
+    slots: List[Dict[str, Any]],
+    assigned_judges: Dict[str, int],
+) -> None:
+    for suggestion in state.get("no_show_suggestions", []):
+        team = suggestion.get("team")
+        if team in assigned_judges:
+            suggestion["judge_id"] = assigned_judges[team]
+
+    schedule_id = _upsert_schedule_by_type(
+        state,
+        "noshow",
+        _schedule_id("noshow_schedule"),
+        "No-show recovery",
+        slots,
+    )
+    _set_active_schedule(state, schedule_id, slots)
+
+
+def _refresh_no_show_gaps_from_schedule(state: Dict[str, Any], raw_schedule: str) -> None:
+    matches = _parse_matches(raw_schedule)
+    team_matches = _extract_team_matches(matches)
+    final_teams = sorted(team_matches.keys(), key=_team_sort_key)
+    final_team_set = set(final_teams)
+
+    existing_no_show_teams = {
+        team for team in state.get("no_shows", []) if isinstance(team, str)
+    }
+    existing_suggestion_teams = {
+        s.get("team")
+        for s in state.get("no_show_suggestions", [])
+        if isinstance(s.get("team"), str)
+    }
+    teams_to_cross_off = sorted(
+        (existing_no_show_teams | existing_suggestion_teams) - final_team_set,
+        key=_team_sort_key,
+    )
+
+    state["final_match_teams"] = final_teams
+    state["team_matches"] = {
+        team: [{"time": m["time"].isoformat(), "label": m["label"]} for m in entries]
+        for team, entries in team_matches.items()
+    }
+
+    state["no_shows"] = [team for team in state.get("no_shows", []) if team in final_team_set]
+    not_competing_set = {
+        team
+        for team in state.get("not_competing", [])
+        if isinstance(team, str) and team in final_team_set
+    }
+    not_competing_set.update(teams_to_cross_off)
+    state["not_competing"] = sorted(not_competing_set, key=_team_sort_key)
+
+    for team in teams_to_cross_off:
+        _update_slot_status(state, team, "checked")
+
+    existing_suggestion_teams_ordered = [
+        s.get("team")
+        for s in state.get("no_show_suggestions", [])
+        if s.get("team") in final_team_set
+    ]
+    no_show_teams = [team for team in state.get("no_shows", []) if team in final_team_set]
+    ordered_teams: List[str] = []
+    seen: set[str] = set()
+    for team in existing_suggestion_teams_ordered + no_show_teams:
+        if team and team not in seen:
+            seen.add(team)
+            ordered_teams.append(team)
+
+    refreshed_suggestions: List[Dict[str, Any]] = []
+    for team in ordered_teams:
+        normalized_matches = _normalize_match_entries(team_matches.get(team, []))
+        refreshed_suggestions.append(_build_no_show_suggestion(team, normalized_matches))
+
+    # Keep crossed-off teams visible in the column but flagged so they are skipped during scheduling
+    for team in teams_to_cross_off:
+        refreshed_suggestions.append({"team": team, "judge_id": None, "gaps": [], "not_in_schedule": True})
+
+    state["no_show_suggestions"] = refreshed_suggestions
+    in_schedule = [s for s in refreshed_suggestions if not s.get("not_in_schedule")]
+    if in_schedule:
+        state["last_suggestions"] = in_schedule[-1]
+    else:
+        state.pop("last_suggestions", None)
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -533,12 +631,30 @@ def generate(payload: Dict[str, Any]) -> Dict[str, Any]:
             detail="Judging end time must be after the start time.",
         )
 
-    try:
-        matches = _parse_matches(raw_schedule)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    if str(raw_schedule).strip():
+        try:
+            matches = _parse_matches(raw_schedule)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        team_matches = _extract_team_matches(matches)
+    else:
+        existing_team_matches = existing_state.get("team_matches", {})
+        if not existing_team_matches:
+            raise HTTPException(
+                status_code=400,
+                detail="Upload match schedule before generating.",
+            )
+        team_matches = {
+            k: _normalize_match_entries(v)
+            for k, v in existing_team_matches.items()
+        }
 
-    team_matches = _extract_team_matches(matches)
+    if not team_matches:
+        raise HTTPException(
+            status_code=400,
+            detail="No teams found in match schedule.",
+        )
+
     teams = sorted(team_matches.keys(), key=_team_sort_key)
     slots = _build_slots(judge_pairs, start_time, duration_minutes, slot_minutes)
     slots, unassigned = _assign_slots_balanced_random(slots, teams, judge_pairs)
@@ -569,6 +685,7 @@ def generate(payload: Dict[str, Any]) -> Dict[str, Any]:
             "block_minutes": block_minutes,
             "start_time": start_time.isoformat(),
             "end_time": end_time.isoformat(),
+            "event_stats": payload.get("event_stats") or {},
         },
         "locked": False,
         "noshow_locked": False,
@@ -645,13 +762,20 @@ def noshow(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     team_matches = state.get("team_matches", {}).get(team, [])
     normalized_matches = _normalize_match_entries(team_matches)
-    suggestion = _build_no_show_suggestion(team, normalized_matches)
+
+    final_match_teams = set(state.get("final_match_teams", []))
+    not_in_schedule = bool(final_match_teams and team not in final_match_teams)
+    if not_in_schedule:
+        suggestion = {"team": team, "judge_id": None, "gaps": [], "not_in_schedule": True}
+    else:
+        suggestion = _build_no_show_suggestion(team, normalized_matches)
 
     state["no_show_suggestions"] = [
         s for s in state.get("no_show_suggestions", []) if s.get("team") != team
     ]
     state["no_show_suggestions"].append(suggestion)
-    state["last_suggestions"] = suggestion
+    if not not_in_schedule:
+        state["last_suggestions"] = suggestion
 
     _save_state(state)
     return state
@@ -739,97 +863,26 @@ def reset_all() -> Dict[str, Any]:
 
 
 @app.post("/api/generate-noshow")
-def generate_no_show_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
+def generate_no_show_schedule(payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
     state = _load_state()
     if state.get("noshow_locked"):
         raise HTTPException(status_code=400, detail="No-show schedule is locked after printing.")
-    config = state.get("config", {})
-    slot_minutes = int(config.get("slot_minutes", 10))
-    judge_pairs = int(config.get("judge_pairs", 1))
-    block_minutes = int(config.get("block_minutes", 0))
-    damp_delta = timedelta(minutes=block_minutes / 2) if block_minutes > 0 else timedelta(0)
 
-    active_schedule = _get_active_schedule(state)
-    base_slots = active_schedule.get("slots", []) if active_schedule else state.get("slots", [])
-    existing_by_judge = _collect_judge_intervals(base_slots)
+    raw_schedule = str((payload or {}).get("match_schedule", "")).strip()
+    event_stats = (payload or {}).get("event_stats")
+    if event_stats:
+        state.setdefault("config", {})["event_stats"] = event_stats
+    if raw_schedule:
+        try:
+            _refresh_no_show_gaps_from_schedule(state, raw_schedule)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
-    no_show_teams = [s.get("team") for s in state.get("no_show_suggestions", []) if s.get("team")]
-    if not no_show_teams:
-        raise HTTPException(status_code=400, detail="No no-show teams to schedule.")
-
-    slots: List[Dict[str, Any]] = []
-    assigned_judges: Dict[str, int] = {}
-    judge_ids = list(range(1, judge_pairs + 1))
-    target_per_judge = max(1, len(no_show_teams) // judge_pairs)
-    remainder = len(no_show_teams) % judge_pairs
-    extra_judges = set(random.sample(judge_ids, remainder)) if remainder else set()
-    judge_targets = {
-        judge_id: target_per_judge + (1 if judge_id in extra_judges else 0)
-        for judge_id in judge_ids
-    }
-    judge_counts = {judge_id: 0 for judge_id in judge_ids}
-    for suggestion in state.get("no_show_suggestions", []):
-        team = suggestion.get("team")
-        gaps = suggestion.get("gaps", [])
-        if not team or not gaps:
-            continue
-        best_overall: Tuple[int, Tuple[datetime, datetime, Dict[str, Any]]] | None = None
-        for judge_id in judge_ids:
-            if judge_counts[judge_id] >= judge_targets[judge_id]:
-                continue
-            intervals = existing_by_judge.setdefault(judge_id, [])
-            candidate = _find_best_slot_for_judge(gaps, slot_minutes, intervals, damp_delta)
-            if not candidate:
-                continue
-            if best_overall is None or candidate[0] < best_overall[1][0]:
-                best_overall = (judge_id, candidate)
-
-        if not best_overall:
-            for judge_id in judge_ids:
-                intervals = existing_by_judge.setdefault(judge_id, [])
-                candidate = _find_best_slot_for_judge(gaps, slot_minutes, intervals, damp_delta)
-                if not candidate:
-                    continue
-                if best_overall is None or candidate[0] < best_overall[1][0]:
-                    best_overall = (judge_id, candidate)
-
-        if not best_overall:
-            continue
-
-        chosen_judge = best_overall[0]
-        chosen_slot = best_overall[1]
-
-        intervals = existing_by_judge.setdefault(chosen_judge, [])
-        intervals.append((chosen_slot[0], chosen_slot[1]))
-        intervals.sort()
-        judge_counts[chosen_judge] += 1
-        assigned_judges[team] = chosen_judge
-        slots.append(
-            {
-                "judge_id": chosen_judge,
-                "start": chosen_slot[0].isoformat(),
-                "end": chosen_slot[1].isoformat(),
-                "team": team,
-                "status": "rescheduled",
-                "between": chosen_slot[2].get("between"),
-            }
-        )
+    slots, assigned_judges = _build_no_show_schedule(state)
 
     if not slots:
         raise HTTPException(status_code=400, detail="No gaps available for no-show teams.")
 
-    for suggestion in state.get("no_show_suggestions", []):
-        team = suggestion.get("team")
-        if team in assigned_judges:
-            suggestion["judge_id"] = assigned_judges[team]
-
-    schedule_id = _upsert_schedule_by_type(
-        state,
-        "noshow",
-        _schedule_id("noshow_schedule"),
-        "No-show recovery",
-        slots,
-    )
-    _set_active_schedule(state, schedule_id, slots)
+    _apply_no_show_schedule(state, slots, assigned_judges)
     _save_state(state)
     return state

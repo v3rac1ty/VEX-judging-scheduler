@@ -60,6 +60,34 @@
             />
           </label>
         </div>
+        <details class="event-stats-panel">
+          <summary>Event statistics</summary>
+          <div class="event-stats-grid">
+            <div class="stat-group">
+              <span class="stat-group-label">Rounds per team</span>
+              <label>Min <input id="roundsMin" type="number" min="1" value="8" /></label>
+              <label>Max <input id="roundsMax" type="number" min="1" value="8" /></label>
+            </div>
+            <div class="stat-group">
+              <span class="stat-group-label">Match spacing</span>
+              <label>Min <input id="spacingMin" type="number" min="1" value="3" /></label>
+              <label>Max <input id="spacingMax" type="number" min="1" value="14" /></label>
+              <label>Avg <input id="spacingAvg" type="number" min="1" value="7" /></label>
+            </div>
+            <div class="stat-group">
+              <span class="stat-group-label">Repeat count</span>
+              <label>Min <input id="repeatMin" type="number" min="1" value="1" /></label>
+              <label>Max <input id="repeatMax" type="number" min="1" value="2" /></label>
+              <label>Avg <input id="repeatAvg" type="number" min="1" value="1" /></label>
+            </div>
+            <div class="stat-group">
+              <span class="stat-group-label">Distinct teams seen</span>
+              <label>Min <input id="distinctMin" type="number" min="1" value="21" /></label>
+              <label>Max <input id="distinctMax" type="number" min="1" value="24" /></label>
+              <label>Avg <input id="distinctAvg" type="number" min="1" value="23" /></label>
+            </div>
+          </div>
+        </details>
         <div class="dropzone" id="dropzone">
           <input id="fileInput" type="file" accept=".json,.log,.txt" />
           <div class="dropzone-content">
@@ -110,6 +138,7 @@
             Final match schedule
             <textarea id="finalMatchSchedule" rows="6" readonly></textarea>
           </label>
+          <p class="stat-note">Event statistics are set in the <strong>Setup</strong> panel and included automatically.</p>
           <button id="generateNoShowBtn" class="secondary" type="button">
             Generate no-show schedule
           </button>

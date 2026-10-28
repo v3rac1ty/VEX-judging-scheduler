@@ -10,6 +10,18 @@ const slotMinutesInput = document.getElementById("slotMinutes");
 const blockMinutesInput = document.getElementById("blockMinutes");
 const startTimeInput = document.getElementById("startTime");
 const endTimeInput = document.getElementById("endTime");
+
+const roundsMinInput = document.getElementById("roundsMin");
+const roundsMaxInput = document.getElementById("roundsMax");
+const spacingMinInput = document.getElementById("spacingMin");
+const spacingMaxInput = document.getElementById("spacingMax");
+const spacingAvgInput = document.getElementById("spacingAvg");
+const repeatMinInput = document.getElementById("repeatMin");
+const repeatMaxInput = document.getElementById("repeatMax");
+const repeatAvgInput = document.getElementById("repeatAvg");
+const distinctMinInput = document.getElementById("distinctMin");
+const distinctMaxInput = document.getElementById("distinctMax");
+const distinctAvgInput = document.getElementById("distinctAvg");
 const matchScheduleInput = document.getElementById("matchSchedule");
 const dropzoneEl = document.getElementById("dropzone");
 const fileInputEl = document.getElementById("fileInput");
@@ -40,12 +52,38 @@ const updateLockState = (state) => {
   }
 };
 
+const getEventStats = () => ({
+  rounds_min: Number(roundsMinInput?.value || 8),
+  rounds_max: Number(roundsMaxInput?.value || 8),
+  spacing_min: Number(spacingMinInput?.value || 3),
+  spacing_max: Number(spacingMaxInput?.value || 14),
+  spacing_avg: Number(spacingAvgInput?.value || 7),
+  repeat_min: Number(repeatMinInput?.value || 1),
+  repeat_max: Number(repeatMaxInput?.value || 2),
+  repeat_avg: Number(repeatAvgInput?.value || 1),
+  distinct_min: Number(distinctMinInput?.value || 21),
+  distinct_max: Number(distinctMaxInput?.value || 24),
+  distinct_avg: Number(distinctAvgInput?.value || 23),
+});
+
+const setEventStats = (stats) => {
+  if (!stats) return;
+  const set = (el, key) => { if (el && stats[key] != null) el.value = stats[key]; };
+  set(roundsMinInput, "rounds_min"); set(roundsMaxInput, "rounds_max");
+  set(spacingMinInput, "spacing_min"); set(spacingMaxInput, "spacing_max"); set(spacingAvgInput, "spacing_avg");
+  set(repeatMinInput, "repeat_min"); set(repeatMaxInput, "repeat_max"); set(repeatAvgInput, "repeat_avg");
+  set(distinctMinInput, "distinct_min"); set(distinctMaxInput, "distinct_max"); set(distinctAvgInput, "distinct_avg");
+};
+
 const applyState = (state) => {
   currentState = state;
   updateLockState(state);
   renderSchedule(state);
   renderScheduleSelect(state);
   renderNoShow(state);
+  if (state?.config?.event_stats) {
+    setEventStats(state.config.event_stats);
+  }
 };
 
 const formatTime = (date) =>
@@ -66,6 +104,119 @@ const futureLocalInput = (minutesAhead) => {
 const toLocalTime = (isoString) => {
   const date = new Date(isoString);
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
+
+const stripLogPreamble = (text) => {
+  // Find the start of the JSON payload after a log marker like:
+  // ">> Matches: {\n  [" or ">> Fetched matches:\n["
+  const markerMatch = text.match(/>>[^\n]*(?:matches|Matches)\s*:\s*/);
+  if (markerMatch) {
+    const afterMarker = text.slice(markerMatch.index + markerMatch[0].length);
+    // Jump to the first [ or {
+    const jsonStart = afterMarker.search(/[[{]/);
+    if (jsonStart !== -1) {
+      return afterMarker.slice(jsonStart);
+    }
+  }
+  return text;
+};
+
+const parseMatchesFromText = (text) => {
+  if (!text || !text.trim()) {
+    return null;
+  }
+
+  const workingText = stripLogPreamble(text);
+
+  try {
+    const parsed = JSON.parse(workingText);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (parsed && Array.isArray(parsed.Matches)) {
+      return parsed.Matches;
+    }
+  } catch {
+    // Fall back to extracting the first JSON array.
+  }
+
+  const match = workingText.match(/\[(.*)\]/s);
+  if (!match) {
+    return null;
+  }
+
+  try {
+    const extracted = JSON.parse(`[${match[1]}]`);
+    return Array.isArray(extracted) ? extracted : null;
+  } catch {
+    return null;
+  }
+};
+
+const extractTeamCount = (matches) => {
+  if (!Array.isArray(matches)) {
+    return 0;
+  }
+
+  const teams = new Set();
+  matches.forEach((match) => {
+    const alliances = match?.matchInfo?.alliances || [];
+    alliances.forEach((alliance) => {
+      const allianceTeams = alliance?.teams || [];
+      allianceTeams.forEach((team) => {
+        const teamNumber = String(team?.number || "").trim();
+        if (teamNumber) {
+          teams.add(teamNumber);
+        }
+      });
+    });
+  });
+
+  return teams.size;
+};
+
+const extractTeamCountFromText = (text) => {
+  if (!text) {
+    return 0;
+  }
+  const teams = new Set();
+  const numberRegex = /"number"\s*:\s*"?([A-Za-z0-9-]+)"?/g;
+  let m;
+  while ((m = numberRegex.exec(text)) !== null) {
+    const team = String(m[1] || "").trim();
+    if (team) {
+      teams.add(team);
+    }
+  }
+  return teams.size;
+};
+
+const extractMatchStartTime = (matches) => {
+  if (!Array.isArray(matches) || !matches.length) {
+    return null;
+  }
+
+  const qualsTimes = [];
+  const allTimes = [];
+  matches.forEach((match) => {
+    const info = match?.matchInfo || {};
+    const epoch = Number(info.timeScheduled);
+    if (!Number.isFinite(epoch)) {
+      return;
+    }
+    const round = String(info?.matchTuple?.round || "").toUpperCase();
+    allTimes.push(epoch);
+    if (round === "QUAL") {
+      qualsTimes.push(epoch);
+    }
+  });
+
+  const source = qualsTimes.length ? qualsTimes : allTimes;
+  if (!source.length) {
+    return null;
+  }
+
+  return new Date(Math.min(...source) * 1000);
 };
 
 const parseQualsStartTime = (text) => {
@@ -96,15 +247,29 @@ const parseQualsStartTime = (text) => {
 };
 
 const updateJudgingTimesFromFile = (text) => {
-  const qualsStart = parseQualsStartTime(text);
-  if (!qualsStart) {
+  const matches = parseMatchesFromText(text);
+  const matchStart = extractMatchStartTime(matches) || parseQualsStartTime(text);
+  if (!matchStart) {
     return;
   }
+
   if (endTimeInput) {
-    endTimeInput.value = formatTime(qualsStart);
+    endTimeInput.value = formatTime(matchStart);
   }
+
+  const teamCount = extractTeamCount(matches);
+  const fallbackTeamCount = teamCount || extractTeamCountFromText(text);
+  const effectiveTeamCount = fallbackTeamCount;
+  const judgePairs = Math.max(1, Number(judgePairsInput?.value || 1));
+  const slotMinutes = Math.max(1, Number(slotMinutesInput?.value || 10));
+
+  const defaultDuration = 100;
+  const computedDuration = effectiveTeamCount > 0
+    ? Math.ceil(effectiveTeamCount / judgePairs) * slotMinutes
+    : defaultDuration;
+
   if (startTimeInput) {
-    const start = new Date(qualsStart.getTime() - 100 * 60000);
+    const start = new Date(matchStart.getTime() - computedDuration * 60000);
     startTimeInput.value = formatTime(start);
   }
 };
@@ -126,6 +291,21 @@ const loadFinalScheduleFile = async (file) => {
   const text = await file.text();
   finalMatchScheduleInput.value = text;
   statusEl.textContent = `Loaded final schedule ${file.name}.`;
+};
+
+const clearMatchScheduleInputs = () => {
+  if (matchScheduleInput) {
+    matchScheduleInput.value = "";
+  }
+  if (finalMatchScheduleInput) {
+    finalMatchScheduleInput.value = "";
+  }
+  if (fileInputEl) {
+    fileInputEl.value = "";
+  }
+  if (finalFileInputEl) {
+    finalFileInputEl.value = "";
+  }
 };
 
 const getActiveSchedule = (state) => {
@@ -364,6 +544,16 @@ const renderNoShow = (state) => {
 
   noShowEl.innerHTML = suggestions
     .map((entry) => {
+      // Team not in the final match schedule — show as crossed off, excluded from recovery
+      if (entry.not_in_schedule) {
+        return `
+          <div class="noshow-item not-in-schedule">
+            <span class="crossed-off">Team ${entry.team}</span>
+            <span class="badge checked">Not in final schedule</span>
+          </div>
+        `;
+      }
+
       const judgeLabel = entry.judge_id ? `Judge Pair ${entry.judge_id}` : "Judge Pair TBD";
       const gaps = entry.gaps || [];
       if (!gaps.length) {
@@ -466,6 +656,7 @@ const generateSchedule = async () => {
     start_time: startTimeInput.value,
     end_time: endTimeInput.value,
     match_schedule: matchScheduleInput.value,
+    event_stats: getEventStats(),
   };
 
   const response = await fetch("/api/generate", {
@@ -492,6 +683,7 @@ const generateNoShowSchedule = async () => {
   statusEl.textContent = "Generating no-show schedule...";
   const payload = {
     match_schedule: finalMatchScheduleInput?.value || "",
+    event_stats: getEventStats(),
   };
   const response = await fetch("/api/generate-noshow", {
     method: "POST",
@@ -526,6 +718,7 @@ const loadState = async () => {
     }
     updateLockState(null);
     currentState = null;
+    clearMatchScheduleInputs();
   }
 };
 
@@ -546,6 +739,7 @@ const resetAll = async () => {
   }
   currentState = null;
   updateLockState(null);
+  clearMatchScheduleInputs();
   statusEl.textContent = "Reset complete.";
   loadState();
 };
@@ -640,4 +834,21 @@ if (!startTimeInput.value) {
 if (endTimeInput && !endTimeInput.value) {
   endTimeInput.value = futureLocalInput(100);
 }
+
+if (judgePairsInput) {
+  judgePairsInput.addEventListener("change", () => {
+    if (matchScheduleInput?.value) {
+      updateJudgingTimesFromFile(matchScheduleInput.value);
+    }
+  });
+}
+
+if (slotMinutesInput) {
+  slotMinutesInput.addEventListener("change", () => {
+    if (matchScheduleInput?.value) {
+      updateJudgingTimesFromFile(matchScheduleInput.value);
+    }
+  });
+}
+
 loadState();
