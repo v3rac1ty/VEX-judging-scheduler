@@ -26,6 +26,8 @@ from .settings import Settings
 log = logging.getLogger(__name__)
 
 StateView = dict[str, Any]
+# Receives the committed state view, under the store lock, after each commit.
+StateListener = Callable[[StateView], None]
 
 
 def state_view(state: StateDict) -> StateView:
@@ -66,7 +68,7 @@ def migrate_state(raw: Any) -> StateDict:
     return state  # type: ignore[return-value]
 
 
-def _write_atomic(path: Path, text: str) -> None:
+def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
@@ -84,7 +86,13 @@ class StateStore:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._lock = threading.RLock()
+        self._listeners: list[StateListener] = []
         self._state: StateDict = self._load()
+
+    def add_listener(self, listener: StateListener) -> None:
+        """`listener` runs under the store lock after each commit, so calls arrive in revision order."""
+        with self._lock:
+            self._listeners.append(listener)
 
     # ------------------------------------------------------------------ paths
 
@@ -150,21 +158,32 @@ class StateStore:
                 for path in self.schedules_dir.glob("*.json"):
                     path.unlink(missing_ok=True)
             # Archives written by older versions lived directly in data/.
+            keep = {self.state_path, self._settings.draft_path}
             for path in self._settings.data_dir.glob("*.json"):
-                if path != self.state_path:
+                if path not in keep:
                     path.unlink(missing_ok=True)
             self._persist(fresh)
             self._state = fresh
-            return state_view(self._state)
+            view = state_view(self._state)
+            self._notify(view)
+            return view
 
     def _commit(self, working: StateDict) -> None:
         working["revision"] = self.revision + 1
         self._write_new_archives(working)
         self._persist(working)
         self._state = working
+        self._notify(state_view(working))
+
+    def _notify(self, view: StateView) -> None:
+        for listener in self._listeners:
+            try:
+                listener(view)
+            except Exception:  # a broken listener must not undo a committed mutation
+                log.exception("State listener failed")
 
     def _persist(self, state: StateDict) -> None:
-        _write_atomic(self.state_path, json.dumps(state, indent=2))
+        write_atomic(self.state_path, json.dumps(state, indent=2))
 
     def _write_new_archives(self, working: StateDict) -> None:
         """Archive each schedule version when it is created or regenerated."""
@@ -176,4 +195,4 @@ class StateStore:
     def _write_archive(self, schedule: ScheduleDict) -> None:
         name = Path(schedule.get("file") or f"{schedule.get('id')}.json").name
         payload = {"id": schedule.get("id"), "slots": schedule.get("slots", [])}
-        _write_atomic(self.schedules_dir / name, json.dumps(payload, indent=2))
+        write_atomic(self.schedules_dir / name, json.dumps(payload, indent=2))

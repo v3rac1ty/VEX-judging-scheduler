@@ -24,6 +24,16 @@
   <body>
     <div class="bg-gradient"></div>
     <header class="hero">
+      <div
+        id="connPill"
+        class="conn-pill"
+        data-status="connecting"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="conn-dot" aria-hidden="true"></span>
+        <span id="connLabel">Connecting…</span>
+      </div>
       <div class="hero-content">
         <p class="eyebrow">Inspection Period Planner</p>
         <h1>VEX Judging Scheduler</h1>
@@ -104,6 +114,7 @@
             <span>or click to browse</span>
           </div>
         </div>
+        <p id="matchPreview" class="upload-preview" aria-live="polite"></p>
         <label class="full">
           Match schedule JSON or log
           <textarea id="matchSchedule" rows="10" readonly></textarea>
@@ -143,6 +154,7 @@
               <span>or click to browse</span>
             </div>
           </div>
+          <p id="finalPreview" class="upload-preview" aria-live="polite"></p>
           <label class="full">
             Final match schedule
             <textarea id="finalMatchSchedule" rows="6" readonly></textarea>

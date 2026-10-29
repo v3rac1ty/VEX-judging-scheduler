@@ -1,6 +1,11 @@
 // File dropzones (initial match schedule + final match schedule).
+//
+// The client never parses files: it reads the text and PATCHes it to the shared
+// draft; the server parses it and sends back a preview (counts, first match) and
+// the derived judging times. The read-only textareas just mirror the draft.
 import { els, setStatus } from "./dom.js";
-import { updateJudgingTimesFromFile } from "./setup.js";
+import { patchDraft } from "./draft.js";
+import { describePreview } from "./util.js";
 
 /** Wire click-to-browse, drag-and-drop and input change to onFile(file). */
 const setupDropzone = ({ zone, input, onFile }) => {
@@ -35,24 +40,48 @@ const setupDropzone = ({ zone, input, onFile }) => {
   input.addEventListener("change", (event) => handle(event.target.files?.[0]));
 };
 
+const upload = async (file, key, doneMessage) => {
+  const text = await file.text();
+  const result = await patchDraft({ [key]: { text, name: file.name } });
+  setStatus(result.ok ? doneMessage : result.error || `Could not upload ${file.name}.`);
+};
+
 export const initUploads = () => {
   setupDropzone({
     zone: els.dropzone,
     input: els.fileInput,
-    onFile: async (file) => {
-      const text = await file.text();
-      els.matchSchedule.value = text;
-      updateJudgingTimesFromFile(text);
-      setStatus(`Loaded ${file.name}.`);
-    },
+    onFile: (file) => upload(file, "match_schedule", `Loaded ${file.name}.`),
   });
 
   setupDropzone({
     zone: els.finalDropzone,
     input: els.finalFileInput,
-    onFile: async (file) => {
-      els.finalMatchSchedule.value = await file.text();
-      setStatus(`Loaded final schedule ${file.name}.`);
-    },
+    onFile: (file) => upload(file, "final_schedule", `Loaded final schedule ${file.name}.`),
   });
+};
+
+// Last value written to each element, so big texts are only reassigned (and the
+// browser only re-lays-out the textarea) when they actually change.
+const lastText = new WeakMap();
+
+const setText = (textarea, text) => {
+  if (!textarea || lastText.get(textarea) === text) return;
+  lastText.set(textarea, text);
+  if (textarea.value !== text) textarea.value = text;
+};
+
+const setPreview = (el, name, preview) => {
+  if (!el) return;
+  const { text, error } = describePreview(name, preview);
+  if (el.textContent !== text) el.textContent = text;
+  el.classList.toggle("is-error", error);
+};
+
+/** Subscriber: mirror the shared draft's uploaded texts and previews. */
+export const renderUploads = (draft) => {
+  if (!draft) return;
+  setText(els.matchSchedule, draft.match_schedule?.text ?? "");
+  setText(els.finalMatchSchedule, draft.final_schedule?.text ?? "");
+  setPreview(els.matchPreview, draft.match_schedule?.name, draft.preview);
+  setPreview(els.finalPreview, draft.final_schedule?.name, draft.final_preview);
 };

@@ -1,8 +1,8 @@
 import { els, patchHtml } from "../dom.js";
 import { escapeHtml, timeRange } from "../util.js";
 import {
-  getActiveSchedule,
-  canEditActiveSchedule,
+  getViewedSchedule,
+  canEditViewedSchedule,
   groupByJudge,
 } from "../selectors.js";
 
@@ -34,19 +34,19 @@ const renderSlot = (slot, actionsEnabled) => {
     </div>`;
 };
 
-/** Pure function of (state, ui): the judge-card list for the active schedule. */
+/** Pure function of (state, ui): the judge-card list for the schedule this device views. */
 export const renderSchedule = (state, ui) => {
-  const active = getActiveSchedule(state);
-  if (!active || !Array.isArray(active.slots) || !active.slots.length) {
+  const viewed = getViewedSchedule(state, ui);
+  if (!viewed || !Array.isArray(viewed.slots) || !viewed.slots.length) {
     patchHtml(els.schedule, "<p>No schedule loaded.</p>");
     return;
   }
 
   const searchTerm = (ui?.search || "").trim().toLowerCase();
-  const actionsEnabled = canEditActiveSchedule(state);
+  const actionsEnabled = canEditViewedSchedule(state, ui);
 
   const cards = [];
-  groupByJudge(active.slots).forEach((slots, judgeId) => {
+  groupByJudge(viewed.slots).forEach((slots, judgeId) => {
     const visible = searchTerm
       ? slots.filter((slot) => slot.team && String(slot.team).toLowerCase().includes(searchTerm))
       : slots;

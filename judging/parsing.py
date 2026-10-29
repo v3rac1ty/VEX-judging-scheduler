@@ -209,3 +209,59 @@ def parse_time(raw_time: str, label: str, tz: tzinfo, today: date | None = None)
         if hour <= 23 and minute <= 59:
             return datetime(day.year, day.month, day.day, hour, minute, tzinfo=tz)
     raise ValueError(f"{label.capitalize()} must be like 9:00 AM.")
+
+
+class MatchPreview(TypedDict):
+    match_count: int
+    team_count: int
+    first_match: str | None  # ISO 8601 in the event timezone
+    error: str | None
+
+
+def preview_matches(raw_text: str, tz: tzinfo) -> MatchPreview | None:
+    """Summary of an uploaded schedule for the setup form; None when the text is blank.
+
+    `first_match` is the earliest scheduled qualification match, else the
+    earliest scheduled match of any round. Unparseable text yields `error`.
+    """
+    text = str(raw_text or "")
+    if not text.strip():
+        return None
+    try:
+        matches = parse_matches(text)
+    except ValueError as exc:
+        return {"match_count": 0, "team_count": 0, "first_match": None, "error": str(exc)}
+
+    teams: set[str] = set()
+    earliest_qual: int | None = None
+    earliest_any: int | None = None
+    for match in matches:
+        info = match.get("matchInfo") or {}
+        if not isinstance(info, dict):
+            continue
+        for alliance in info.get("alliances") or []:
+            for team in (alliance or {}).get("teams") or []:
+                number = str((team or {}).get("number", "")).strip() if isinstance(team, dict) else ""
+                if number:
+                    teams.add(number)
+        seconds = _epoch_seconds(info.get("timeScheduled"))
+        if seconds is None:
+            continue
+        earliest_any = seconds if earliest_any is None else min(earliest_any, seconds)
+        round_name = str((info.get("matchTuple") or {}).get("round", "")).upper()
+        if round_name == "QUAL":
+            earliest_qual = seconds if earliest_qual is None else min(earliest_qual, seconds)
+
+    first = earliest_qual if earliest_qual is not None else earliest_any
+    return {
+        "match_count": len(matches),
+        "team_count": len(teams),
+        "first_match": datetime.fromtimestamp(first, tz=tz).isoformat() if first is not None else None,
+        "error": None,
+    }
+
+
+def format_clock(moment: datetime) -> str:
+    """12-hour wall-clock time without a leading zero: "9:05 AM"."""
+    hour = moment.hour % 12 or 12
+    return f"{hour}:{moment.minute:02d} {'AM' if moment.hour < 12 else 'PM'}"

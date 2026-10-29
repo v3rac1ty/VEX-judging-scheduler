@@ -65,6 +65,16 @@ def active_slots(state: StateDict) -> list[SlotDict]:
     return schedule.get("slots", []) if schedule else []
 
 
+def target_schedule(state: StateDict, schedule_id: str | None) -> ScheduleDict | None:
+    """The schedule an action names, or the active one when `schedule_id` is omitted."""
+    if schedule_id is None:
+        return active_schedule(state)
+    schedule = next((s for s in state.get("schedules", []) if s.get("id") == schedule_id), None)
+    if schedule is None:
+        raise ServiceError(404, "Schedule not found.")
+    return schedule
+
+
 def new_schedule_id(state: StateDict, prefix: str) -> str:
     """`<prefix>-YYYYmmdd-HHMMSS`, suffixed if that id already exists."""
     base = f"{prefix}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -102,8 +112,8 @@ def upsert_schedule_by_type(
     return schedule_id
 
 
-def require_printed_for_actions(state: StateDict) -> None:
-    schedule = active_schedule(state)
+def require_printed_for_actions(state: StateDict, schedule: ScheduleDict | None) -> None:
+    """Team actions need the targeted schedule's kind (main / no-show) to be printed."""
     if schedule and schedule.get("type") in NOSHOW_TYPES:
         if not state.get("noshow_locked"):
             raise _bad_request("Print the no-show schedule before checking off teams.")
@@ -112,13 +122,20 @@ def require_printed_for_actions(state: StateDict) -> None:
         raise _bad_request("Print the schedule before checking off teams.")
 
 
-def update_slot_status(state: StateDict, team: str, status: str) -> int | None:
-    """Set `status` on the team's slot in the active schedule; return its judge."""
-    for slot in active_slots(state):
-        if slot.get("team") == team:
-            slot["status"] = status  # type: ignore[typeddict-item]
-            return slot.get("judge_id")
-    return None
+def schedule_has_team(schedule: ScheduleDict | None, team: str) -> bool:
+    return schedule is not None and any(s.get("team") == team for s in schedule.get("slots", []))
+
+
+def set_team_status(state: StateDict, team: str, status: str) -> None:
+    """Set `status` on the team's slot in every schedule version that contains it.
+
+    Each version (initial, printed, no-show, ...) keeps its own slot copies, but a
+    team's status is one fact: devices viewing different versions must agree.
+    """
+    for schedule in state.get("schedules", []):
+        for slot in schedule.get("slots", []):
+            if slot.get("team") == team:
+                slot["status"] = status  # type: ignore[typeddict-item]
 
 
 def _drop_team_suggestions(state: StateDict, team: str) -> None:
@@ -210,17 +227,21 @@ def generate(
     state["revision"] = revision
 
 
-def checkoff(state: StateDict, team: str) -> None:
-    require_printed_for_actions(state)
-    if update_slot_status(state, team, "checked") is None:
+def checkoff(state: StateDict, team: str, schedule_id: str | None = None) -> None:
+    schedule = target_schedule(state, schedule_id)
+    require_printed_for_actions(state, schedule)
+    if not schedule_has_team(schedule, team):
         raise ServiceError(404, "Team not found.")
+    set_team_status(state, team, "checked")
     _drop_team_suggestions(state, team)
 
 
-def noshow(state: StateDict, team: str) -> None:
-    require_printed_for_actions(state)
-    if update_slot_status(state, team, "no-show") is None:
+def noshow(state: StateDict, team: str, schedule_id: str | None = None) -> None:
+    schedule = target_schedule(state, schedule_id)
+    require_printed_for_actions(state, schedule)
+    if not schedule_has_team(schedule, team):
         raise ServiceError(404, "Team not found.")
+    set_team_status(state, team, "no-show")
 
     no_shows = state.setdefault("no_shows", [])
     if team not in no_shows:
@@ -243,8 +264,8 @@ def noshow(state: StateDict, team: str) -> None:
         state["last_suggestions"] = suggestion
 
 
-def mark_not_competing(state: StateDict, team: str) -> None:
-    require_printed_for_actions(state)
+def mark_not_competing(state: StateDict, team: str, schedule_id: str | None = None) -> None:
+    require_printed_for_actions(state, target_schedule(state, schedule_id))
     _drop_team_suggestions(state, team)
     not_competing = state.setdefault("not_competing", [])
     if team not in not_competing:
@@ -257,13 +278,14 @@ def set_active_schedule(state: StateDict, schedule_id: str) -> None:
     state["active_schedule_id"] = schedule_id
 
 
-def snapshot_print(state: StateDict, label: str) -> None:
-    schedule = active_schedule(state)
-    slots = active_slots(state)
+def snapshot_print(state: StateDict, label: str, schedule_id: str | None = None) -> None:
+    """Freeze a printed copy of the targeted schedule and make it the current one."""
+    schedule = target_schedule(state, schedule_id)
+    slots = schedule.get("slots", []) if schedule else []
     if not slots:
         raise _bad_request("No schedule to snapshot.")
 
-    if schedule and schedule.get("type") == "noshow":
+    if schedule and schedule.get("type") in NOSHOW_TYPES:
         if state.get("noshow_locked"):
             return
         label = "Printed no-show recovery"
@@ -325,7 +347,7 @@ def refresh_no_show_gaps_from_schedule(state: StateDict, raw_schedule: str, tz: 
     state["not_competing"] = sorted(not_competing, key=team_sort_key)
 
     for team in teams_to_cross_off:
-        update_slot_status(state, team, "checked")
+        set_team_status(state, team, "checked")
 
     ordered_teams: list[str] = []
     seen: set[str] = set()

@@ -1,10 +1,10 @@
 import { els, patchHtml } from "../dom.js";
 import { escapeHtml, timeRange } from "../util.js";
-import { getActiveSchedule, groupByJudge, isNoShowSchedule } from "../selectors.js";
+import { getViewedSchedule, groupByJudge, isNoShowSchedule } from "../selectors.js";
 
-/** Print-only table; always shows the full schedule (ignores the search filter). */
-export const renderPrint = (state) => {
-  const active = getActiveSchedule(state);
+/** Print-only table for the viewed schedule; always the full schedule (ignores the search filter). */
+export const renderPrint = (state, ui) => {
+  const active = getViewedSchedule(state, ui);
   const slotMinutes = Number(state?.config?.slot_minutes || 0);
   const byJudge = groupByJudge(active?.slots);
 

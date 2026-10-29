@@ -9,6 +9,8 @@ from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from .parsing import MatchPreview
+
 # --------------------------------------------------------------------------- state
 
 SlotStatus = Literal["scheduled", "checked", "no-show", "rescheduled"]
@@ -156,10 +158,16 @@ class GenerateRequest(BaseModel):
         return value
 
 
+def _optional_id(value: Any) -> str | None:
+    return _text(value).strip() or None
+
+
 class TeamRequest(BaseModel):
     model_config = ConfigDict(validate_default=True)
 
     team: str = ""
+    # Target schedule; omitted -> the active schedule.
+    schedule_id: str | None = None
 
     @field_validator("team", mode="before")
     @classmethod
@@ -168,6 +176,11 @@ class TeamRequest(BaseModel):
         if not team:
             raise ValueError("Missing team.")
         return team
+
+    @field_validator("schedule_id", mode="before")
+    @classmethod
+    def _schedule_id(cls, value: Any) -> str | None:
+        return _optional_id(value)
 
 
 class ActiveScheduleRequest(BaseModel):
@@ -186,11 +199,18 @@ class ActiveScheduleRequest(BaseModel):
 
 class SnapshotRequest(BaseModel):
     label: str = "Printed schedule"
+    # Schedule to print; omitted -> the active schedule.
+    schedule_id: str | None = None
 
     @field_validator("label", mode="before")
     @classmethod
     def _label(cls, value: Any) -> str:
         return _text(value).strip() or "Printed schedule"
+
+    @field_validator("schedule_id", mode="before")
+    @classmethod
+    def _schedule_id(cls, value: Any) -> str | None:
+        return _optional_id(value)
 
 
 class GenerateNoShowRequest(BaseModel):
@@ -210,3 +230,146 @@ class GenerateNoShowRequest(BaseModel):
         if not isinstance(value, dict):
             raise ValueError("event_stats must be an object.")
         return value
+
+
+# --------------------------------------------------------------------------- draft
+# The shared setup form, kept apart from scheduling state (data/draft.json).
+
+MAX_SCHEDULE_TEXT_BYTES = 5 * 1024 * 1024
+MAX_FIELD_CHARS = 100
+
+EVENT_STATS_DEFAULTS: dict[str, int] = {
+    "rounds_min": 8,
+    "rounds_max": 8,
+    "spacing_min": 3,
+    "spacing_max": 14,
+    "spacing_avg": 7,
+    "repeat_min": 1,
+    "repeat_max": 2,
+    "repeat_avg": 1,
+    "distinct_min": 21,
+    "distinct_max": 24,
+    "distinct_avg": 23,
+}
+
+DRAFT_TEXT_FIELDS = ("judge_pairs", "slot_minutes", "block_minutes", "start_time", "end_time")
+DRAFT_TEXT_DEFAULTS: dict[str, str] = {
+    "judge_pairs": "4",
+    "slot_minutes": "10",
+    "block_minutes": "8",
+    "start_time": "",
+    "end_time": "",
+}
+# Upload field -> its server-derived preview field.
+DRAFT_SCHEDULE_FIELDS = {"match_schedule": "preview", "final_schedule": "final_preview"}
+
+StatValue = int | float | str | None
+
+
+class ScheduleTextDict(TypedDict):
+    text: str
+    name: str | None
+
+
+class DraftDict(TypedDict):
+    revision: int
+    judge_pairs: str
+    slot_minutes: str
+    block_minutes: str
+    start_time: str
+    end_time: str
+    event_stats: dict[str, StatValue]
+    match_schedule: ScheduleTextDict
+    final_schedule: ScheduleTextDict
+    preview: MatchPreview | None
+    final_preview: MatchPreview | None
+
+
+class DraftPatchResult(TypedDict):
+    revision: int
+    changes: dict[str, Any]
+
+
+def _field_text(value: Any) -> str:
+    """Raw form value as typed; numbers are accepted and stringified."""
+    if value is None:
+        return ""
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise ValueError("Setup fields must be strings.")
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = str(value)
+    if len(text) > MAX_FIELD_CHARS:
+        raise ValueError(f"Setup fields must be {MAX_FIELD_CHARS} characters or less.")
+    return text
+
+
+class ScheduleTextPatch(BaseModel):
+    """An uploaded/pasted schedule. Omitted keys keep their current value."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = ""
+    name: str | None = None
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _text_field(cls, value: Any) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("Schedule text must be a string.")
+        if len(value) > MAX_SCHEDULE_TEXT_BYTES or (
+            len(value) * 4 > MAX_SCHEDULE_TEXT_BYTES
+            and len(value.encode("utf-8", "surrogatepass")) > MAX_SCHEDULE_TEXT_BYTES
+        ):
+            raise ValueError("Schedule text must be 5 MB or less.")
+        return value
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        name = _text(value)[:255]
+        return name or None
+
+
+class DraftPatch(BaseModel):
+    """`PATCH /api/draft` body: any subset of the shared setup fields; unknown keys -> 400."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    judge_pairs: str = ""
+    slot_minutes: str = ""
+    block_minutes: str = ""
+    start_time: str = ""
+    end_time: str = ""
+    event_stats: dict[str, StatValue] = {}
+    match_schedule: ScheduleTextPatch | None = None
+    final_schedule: ScheduleTextPatch | None = None
+
+    @field_validator(*DRAFT_TEXT_FIELDS, mode="before")
+    @classmethod
+    def _setup_text(cls, value: Any) -> str:
+        return _field_text(value)
+
+    @field_validator("event_stats", mode="before")
+    @classmethod
+    def _event_stats(cls, value: Any) -> Any:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("event_stats must be an object.")
+        unknown = sorted(str(key) for key in value if key not in EVENT_STATS_DEFAULTS)
+        if unknown:
+            raise ValueError(f"Unknown event_stats field: {', '.join(unknown)}.")
+        cleaned: dict[str, StatValue] = {}
+        for key, stat in value.items():
+            if stat is None or (isinstance(stat, (int, float)) and not isinstance(stat, bool)):
+                cleaned[key] = stat
+            elif isinstance(stat, str) and len(stat) <= MAX_FIELD_CHARS:
+                cleaned[key] = stat
+            else:
+                raise ValueError(f"event_stats.{key} must be a number.")
+        return cleaned

@@ -48,7 +48,7 @@ def test_old_format_state_migrates(settings, data_dir, first_match):
     persisted = json.loads((data_dir / "state.json").read_text())
     assert "slots" not in persisted and persisted["revision"] == 1
     assert persisted["schedules"][1]["slots"][1]["status"] == "checked"
-    assert persisted["schedules"][0]["slots"][1]["status"] == "scheduled"
+    assert persisted["schedules"][0]["slots"][1]["status"] == "checked"  # every version agrees
 
     client.post("/api/reset")
     assert not (data_dir / "schedule-1.json").exists()
@@ -67,6 +67,7 @@ def test_very_old_state_with_only_slots(settings, data_dir, first_match):
 def test_corrupt_state_is_set_aside(settings, data_dir):
     (data_dir / "state.json").write_text("{not json")
     state = TestClient(create_app(settings)).get("/api/state").json()
+    state.pop("draft")
     assert state == {"revision": 0}
     assert list(data_dir.glob("state.corrupt-*.json"))
 

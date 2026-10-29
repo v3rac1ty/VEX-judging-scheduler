@@ -1,33 +1,39 @@
-// Entry point: subscribe renderers to the store, wire DOM events, load state.
+// Entry point: subscribe renderers to the store, wire DOM events, load state, go live.
 import { els } from "./dom.js";
-import { subscribe, setUi } from "./store.js";
-import { applyLockState, applyEventStats, initSetup } from "./setup.js";
-import { initUploads } from "./uploads.js";
+import { subscribe, setUi, setConnection } from "./store.js";
+import { applyLockState } from "./setup.js";
+import { initDraft, applyDraftToInputs } from "./draft.js";
+import { initUploads, renderUploads } from "./uploads.js";
+import { startLive } from "./live.js";
 import { renderSchedule } from "./render/schedule.js";
 import { renderScheduleSelect } from "./render/scheduleSelect.js";
 import { renderPrint } from "./render/print.js";
 import { renderNoShow, initNoShowToggleTracking } from "./render/noshow.js";
+import { renderConnection } from "./render/connection.js";
 import {
   loadInitialState,
   generateSchedule,
   generateNoShowSchedule,
   printSchedule,
   resetAll,
-  setActiveSchedule,
+  onScheduleSelectChange,
   onScheduleClick,
   onNoShowClick,
   onSearchInput,
 } from "./actions.js";
 
-// Every render is a subscriber: (state, ui) -> DOM.
-subscribe((state) => applyLockState(state));
-subscribe((state) => applyEventStats(state));
-subscribe((state) => renderScheduleSelect(state));
-subscribe((state, ui) => renderSchedule(state, ui));
-subscribe((state) => renderPrint(state));
-subscribe((state) => renderNoShow(state));
+// Every render is a subscriber: (state, ui, draft, connection) -> DOM, limited
+// to the slices it reads so frequent draft/connection updates stay cheap.
+subscribe((state) => applyLockState(state), ["state"]);
+subscribe(renderScheduleSelect, ["state", "ui"]);
+subscribe(renderSchedule, ["state", "ui"]);
+subscribe(renderPrint, ["state", "ui"]);
+subscribe((state) => renderNoShow(state), ["state"]);
+subscribe((_state, _ui, draft) => applyDraftToInputs(draft), ["draft"]);
+subscribe((_state, _ui, draft) => renderUploads(draft), ["draft"]);
+subscribe(renderConnection, ["connection"]);
 
-initSetup();
+initDraft();
 initUploads();
 initNoShowToggleTracking();
 
@@ -35,7 +41,7 @@ els.generateBtn.addEventListener("click", generateSchedule);
 els.printBtn.addEventListener("click", printSchedule);
 els.generateNoShowBtn.addEventListener("click", generateNoShowSchedule);
 els.resetBtn.addEventListener("click", resetAll);
-els.scheduleSelect.addEventListener("change", setActiveSchedule);
+els.scheduleSelect.addEventListener("change", onScheduleSelectChange);
 els.teamSearch.addEventListener("input", onSearchInput);
 
 // One delegated listener per list instead of per-row listeners on every render.
@@ -44,4 +50,8 @@ els.noShow.addEventListener("click", onNoShowClick);
 
 // Browsers may restore a previous search value on reload.
 setUi({ search: els.teamSearch.value });
-loadInitialState();
+setConnection({ status: "connecting" });
+
+// Render from a plain GET first so the page works before (or without) SSE,
+// then stay live. Revision guards make the order of the two irrelevant.
+loadInitialState().finally(startLive);

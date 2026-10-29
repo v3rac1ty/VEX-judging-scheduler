@@ -3,10 +3,13 @@
 import { api } from "./api.js";
 import { els, setStatus } from "./dom.js";
 import { withBusy } from "./busy.js";
-import { getState, setState, setUi } from "./store.js";
-import { canEditActiveSchedule, hasSchedule } from "./selectors.js";
-import { renderScheduleSelect } from "./render/scheduleSelect.js";
-import { getEventStats, clearMatchScheduleInputs } from "./setup.js";
+import { getState, getUi, getDraft, setState, setUi } from "./store.js";
+import {
+  canEditViewedSchedule,
+  hasSchedule,
+  getViewedScheduleIdForRequest,
+} from "./selectors.js";
+import { flushDraft, collectSetup, collectEventStats } from "./draft.js";
 
 // Guards against duplicate submits of the same logical action (e.g. the same
 // team's check-off) even after the button has been re-rendered.
@@ -23,33 +26,24 @@ const post = async (path, body, fallbackError) => {
   return result.data;
 };
 
+/** First paint: GET /api/state carries the draft too, so the page renders before SSE connects. */
 export const loadInitialState = async () => {
   const result = await api.get("/api/state");
   if (!result.ok) {
     setStatus(result.error);
-    setState(null);
     return;
   }
   setState(result.data);
-  if (!getState()) {
-    clearMatchScheduleInputs();
-  }
 };
 
 export const generateSchedule = async () => {
   await withBusy(els.generateBtn, async () => {
     setStatus("Generating schedule...");
+    // Make sure typed-but-unsent edits are in the draft before reading it.
+    await flushDraft();
     const data = await post(
       "/api/generate",
-      {
-        judge_pairs: els.judgePairs.value,
-        slot_minutes: els.slotMinutes.value,
-        block_minutes: els.blockMinutes.value,
-        start_time: els.startTime.value,
-        end_time: els.endTime.value,
-        match_schedule: els.matchSchedule.value,
-        event_stats: getEventStats(),
-      },
+      collectSetup(getDraft()),
       "Failed to generate schedule."
     );
     if (!data) return;
@@ -70,11 +64,13 @@ export const generateSchedule = async () => {
 export const generateNoShowSchedule = async () => {
   await withBusy(els.generateNoShowBtn, async () => {
     setStatus("Generating no-show schedule...");
+    await flushDraft();
+    const draft = getDraft();
     const data = await post(
       "/api/generate-noshow",
       {
-        match_schedule: els.finalMatchSchedule.value || "",
-        event_stats: getEventStats(),
+        match_schedule: draft?.final_schedule?.text || "",
+        event_stats: collectEventStats(draft),
       },
       "Failed to generate no-show schedule."
     );
@@ -83,18 +79,20 @@ export const generateNoShowSchedule = async () => {
 };
 
 export const printSchedule = async () => {
-  if (!hasSchedule(getState())) {
+  if (!hasSchedule(getState(), getUi())) {
     setStatus("Generate a schedule before printing.");
     return;
   }
   await withBusy(els.printBtn, async () => {
-    const data = await post(
-      "/api/snapshot-print",
-      { label: "Printed schedule" },
-      "Failed to snapshot schedule."
-    );
-    // State (and the print table) is already rendered synchronously by setState.
-    if (data) window.print();
+    const body = { label: "Printed schedule" };
+    const scheduleId = getViewedScheduleIdForRequest(getState(), getUi());
+    if (scheduleId) body.schedule_id = scheduleId;
+    const data = await post("/api/snapshot-print", body, "Failed to snapshot schedule.");
+    if (!data) return;
+    // Show the freshly printed (locked) schedule here; other devices just
+    // receive the locked state over SSE and never open a print dialog.
+    setUi({ viewScheduleId: null });
+    window.print();
   });
 };
 
@@ -103,26 +101,18 @@ export const resetAll = async () => {
     return;
   }
   await withBusy(els.resetBtn, async () => {
+    // The empty state and default draft come back through setState and the
+    // draft store (and over SSE to every other device); nothing is cleared by hand.
     const data = await post("/api/reset", {}, "Failed to reset.");
     if (data === null) return;
-    setState(null);
-    clearMatchScheduleInputs();
     setStatus("Reset complete.");
   });
 };
 
-export const setActiveSchedule = async () => {
-  const select = els.scheduleSelect;
-  if (!select.value) return;
-  await withBusy(select, async () => {
-    const data = await post(
-      "/api/active-schedule",
-      { schedule_id: select.value },
-      "Failed to switch schedule."
-    );
-    // On failure, snap the dropdown back to what the server says is active.
-    if (!data) renderScheduleSelect(getState());
-  });
+/** The "View schedule" select is a per-device choice: no server call. */
+export const onScheduleSelectChange = () => {
+  const id = els.scheduleSelect.value;
+  if (id) setUi({ viewScheduleId: id });
 };
 
 /**
@@ -134,7 +124,7 @@ export const updateTeamStatus = async (action, team, button) => {
     setStatus("Cannot update unassigned slot.");
     return;
   }
-  if (!canEditActiveSchedule(getState())) {
+  if (!canEditViewedSchedule(getState(), getUi())) {
     setStatus(
       action === "not-competing"
         ? "Print the schedule before updating teams."
@@ -151,9 +141,12 @@ export const updateTeamStatus = async (action, team, button) => {
   const controls = group?.querySelectorAll ? [...group.querySelectorAll("button")] : [button];
   try {
     await withBusy(controls, async () => {
+      const body = { team };
+      const scheduleId = getViewedScheduleIdForRequest(getState(), getUi());
+      if (scheduleId) body.schedule_id = scheduleId;
       const data = await post(
         `/api/${action}`,
-        { team },
+        body,
         action === "not-competing" ? "Failed to update team." : "Failed to update."
       );
       if (!data) return;

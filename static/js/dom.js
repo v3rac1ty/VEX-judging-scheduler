@@ -31,12 +31,17 @@ export const els = {
     distinct_avg: $("distinctAvg"),
   },
 
+  connPill: $("connPill"),
+  connLabel: $("connLabel"),
+
   matchSchedule: $("matchSchedule"),
+  matchPreview: $("matchPreview"),
   dropzone: $("dropzone"),
   fileInput: $("fileInput"),
   finalDropzone: $("finalDropzone"),
   finalFileInput: $("finalFileInput"),
   finalMatchSchedule: $("finalMatchSchedule"),
+  finalPreview: $("finalPreview"),
 
   generateBtn: $("generateBtn"),
   printBtn: $("printBtn"),

@@ -25,6 +25,10 @@ def error(response, status=400):
     return detail
 
 
+def without_draft(state):
+    return {k: v for k, v in state.items() if k != "draft"}
+
+
 def active(state):
     return next(s for s in state["schedules"] if s["id"] == state["active_schedule_id"])
 
@@ -42,6 +46,7 @@ def test_index_and_static(client):
 def test_empty_state(client):
     state = ok(client.get("/api/state"))
     assert "slots" not in state
+    assert state.pop("draft")["revision"] == 0
     assert state == {"revision": 0}
 
 
@@ -79,8 +84,10 @@ def test_full_flow(client, generate_payload, matches, first_match, data_dir):
     checked, absent, dropped = TEAMS[0], TEAMS[1], TEAMS[2]
     state = ok(client.post("/api/checkoff", json={"team": checked}))
     assert slot_for(state, checked)["status"] == "checked"
+    # Status is shared by every schedule version that has the team.
     initial = next(s for s in state["schedules"] if s["id"] == initial_id)
-    assert all(s["status"] == "scheduled" for s in initial["slots"])
+    assert slot_for(initial, checked)["status"] == "checked"
+    assert all(s["status"] == "scheduled" for s in initial["slots"] if s["team"] != checked)
     assert error(client.post("/api/checkoff", json={"team": "0000X"}), 404) == "Team not found."
 
     state = ok(client.post("/api/noshow", json={"team": absent}))
@@ -130,7 +137,7 @@ def test_full_flow(client, generate_payload, matches, first_match, data_dir):
     before = state["revision"]
     state = ok(client.post("/api/reset", json={}))
     assert state == {"revision": before + 1}
-    assert ok(client.get("/api/state")) == {"revision": before + 1}
+    assert without_draft(ok(client.get("/api/state"))) == {"revision": before + 1}
     assert list((data_dir / "schedules").glob("*.json")) == []
     assert (data_dir / ".gitkeep").exists()
 

@@ -1,8 +1,14 @@
 """Runtime configuration (stdlib only).
 
-Environment variables:
-    EVENT_TZ  IANA timezone name for the event (e.g. "America/Chicago").
-              Defaults to the server's local timezone.
+Environment variables (prefixed so a generic HOST/PORT exported by a shell or
+container can't silently change where the server listens):
+    EVENT_TZ          IANA timezone name for the event (e.g. "America/Chicago").
+                      Defaults to the server's local timezone.
+    JUDGING_HOST      Interface `python -m judging` binds to (default 0.0.0.0: every LAN interface).
+    JUDGING_PORT      TCP port for `python -m judging` (default 8000).
+    JUDGING_DATA_DIR  Directory for state.json, draft.json and schedules/ (default: <repo>/data).
+                      Point it elsewhere for manual testing or a practice copy. Use a
+                      dedicated directory: reset deletes stray *.json files in it.
 """
 from __future__ import annotations
 
@@ -14,8 +20,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
-STATE_PATH = DATA_DIR / "state.json"
-SCHEDULES_DIR = DATA_DIR / "schedules"
 STATIC_DIR = BASE_DIR / "static"
 
 
@@ -54,14 +58,38 @@ def resolve_event_tz() -> tzinfo:
     return _local_zone()
 
 
+def resolve_host() -> str:
+    return os.environ.get("JUDGING_HOST", "").strip() or "0.0.0.0"
+
+
+def resolve_port() -> int:
+    raw = os.environ.get("JUDGING_PORT", "").strip()
+    if not raw:
+        return 8000
+    try:
+        port = int(raw)
+    except ValueError:
+        port = -1
+    if not 0 <= port <= 65535:
+        raise ValueError(f"JUDGING_PORT={raw!r} is not a valid TCP port.")
+    return port
+
+
+def resolve_data_dir() -> Path:
+    raw = os.environ.get("JUDGING_DATA_DIR", "").strip()
+    return Path(raw).expanduser().resolve() if raw else DATA_DIR
+
+
 EVENT_TZ = resolve_event_tz()
 
 
 @dataclass(frozen=True)
 class Settings:
-    data_dir: Path = DATA_DIR
+    data_dir: Path = field(default_factory=resolve_data_dir)
     static_dir: Path = STATIC_DIR
     event_tz: tzinfo = field(default_factory=lambda: EVENT_TZ)
+    host: str = field(default_factory=resolve_host)
+    port: int = field(default_factory=resolve_port)
 
     @property
     def state_path(self) -> Path:
@@ -70,3 +98,7 @@ class Settings:
     @property
     def schedules_dir(self) -> Path:
         return self.data_dir / "schedules"
+
+    @property
+    def draft_path(self) -> Path:
+        return self.data_dir / "draft.json"

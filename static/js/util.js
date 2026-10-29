@@ -12,19 +12,39 @@ const HTML_ESCAPES = {
 export const escapeHtml = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
 
-export const formatTime = (date) =>
-  date.toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+/**
+ * "2026-10-28T11:00:00-05:00" -> "11:00 AM", read straight from the string so
+ * every device shows the event's wall-clock time regardless of its own zone.
+ */
+export const clockFromIso = (iso) => {
+  const match = /T(\d{2}):(\d{2})/.exec(String(iso ?? ""));
+  if (!match) {
+    return "";
+  }
+  const hours = Number(match[1]);
+  return `${hours % 12 || 12}:${match[2]} ${hours >= 12 ? "PM" : "AM"}`;
+};
 
-export const nowLocalInput = () => formatTime(new Date());
+const plural = (count, one, many) => `${count} ${Number(count) === 1 ? one : many}`;
 
-export const futureLocalInput = (minutesAhead) => {
-  const date = new Date();
-  date.setMinutes(date.getMinutes() + minutesAhead);
-  return formatTime(date);
+/**
+ * One-line summary of a server-computed upload preview, e.g.
+ * "initial.log · 48 matches · 24 teams · first qual 11:00 AM".
+ * Returns {text, error}; empty text means "show nothing".
+ */
+export const describePreview = (name, preview) => {
+  if (!preview) {
+    return { text: name || "", error: false };
+  }
+  if (preview.error) {
+    return { text: [name, preview.error].filter(Boolean).join(" · "), error: true };
+  }
+  const parts = [name];
+  if (preview.match_count != null) parts.push(plural(preview.match_count, "match", "matches"));
+  if (preview.team_count != null) parts.push(plural(preview.team_count, "team", "teams"));
+  const first = clockFromIso(preview.first_match);
+  if (first) parts.push(`first qual ${first}`);
+  return { text: parts.filter(Boolean).join(" · "), error: false };
 };
 
 /** ISO timestamp -> local "09:05 AM" style text; empty string if unparseable. */

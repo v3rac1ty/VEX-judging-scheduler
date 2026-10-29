@@ -33,7 +33,53 @@ body {
 }
 
 .hero {
+  position: relative;
   padding: 48px 8vw 24px;
+}
+
+/* Live-sync status pill (top right of the header). */
+.conn-pill {
+  position: absolute;
+  top: 16px;
+  right: 8vw;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: rgba(27, 28, 33, 0.8);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.conn-pill[data-status="live"] {
+  color: var(--text);
+}
+
+.conn-pill[data-status="live"] .conn-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(96, 198, 137, 0.2);
+}
+
+.conn-pill[data-status="connecting"] .conn-dot,
+.conn-pill[data-status="reconnecting"] .conn-dot {
+  background: var(--accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .hero-content {
@@ -232,6 +278,24 @@ textarea {
 .dropzone.is-dragging {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(242, 159, 88, 0.2);
+}
+
+.upload-preview {
+  margin: 10px 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.upload-preview:empty {
+  display: none;
+}
+
+.final-schedule .upload-preview {
+  margin: 0;
+}
+
+.upload-preview.is-error {
+  color: var(--danger);
 }
 
 .final-schedule {

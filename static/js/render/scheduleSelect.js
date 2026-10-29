@@ -1,7 +1,9 @@
 import { els, patchHtml } from "../dom.js";
 import { escapeHtml } from "../util.js";
+import { getViewedScheduleId } from "../selectors.js";
 
-export const renderScheduleSelect = (state) => {
+/** Options come from the server's schedules; the selection is this device's view. */
+export const renderScheduleSelect = (state, ui) => {
   const select = els.scheduleSelect;
   if (!select) return;
 
@@ -21,7 +23,8 @@ export const renderScheduleSelect = (state) => {
     .join("");
   patchHtml(select, html);
   // Always re-assert the selection: patchHtml may have skipped the rewrite.
-  if (state.active_schedule_id != null) {
-    select.value = String(state.active_schedule_id);
+  const viewedId = getViewedScheduleId(state, ui);
+  if (viewedId != null && select.value !== String(viewedId)) {
+    select.value = String(viewedId);
   }
 };
