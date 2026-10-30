@@ -115,7 +115,8 @@ def test_real_server_rejects_chunked_upload_and_sse_still_streams(settings):
         with httpx.Client(base_url=base, timeout=5) as http, http.stream("GET", "/api/events") as stream:
             assert stream.status_code == 200
             events = sse_events(stream.iter_lines())
-            assert [kind for kind, _ in (next(events) for _ in range(3))] == ["state", "draft", "presence"]
+            kinds = [kind for kind, _ in (next(events) for _ in range(4))]
+            assert kinds == ["state", "draft", "presence", "tm"]
 
             body = oversize_json()
 

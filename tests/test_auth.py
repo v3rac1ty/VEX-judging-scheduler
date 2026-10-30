@@ -35,6 +35,10 @@ GATED = [
     ("post", "/api/active-schedule", {"schedule_id": "x"}),
     ("patch", "/api/draft", {"judge_pairs": "6"}),
     ("patch", "/api/draft", {"bogus": 1}),  # still 401: auth runs before body validation
+    ("get", "/api/tm/status", None),
+    ("post", "/api/tm/fetch", {"target": "match_schedule"}),
+    ("post", "/api/tm/fetch", {"target": "nope"}),
+    ("post", "/api/tm/poll", {"target": "match_schedule", "enabled": True}),
 ]
 
 

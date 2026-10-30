@@ -1,7 +1,8 @@
 """LAN runner: `python -m judging`.
 
 Serves on JUDGING_HOST:JUDGING_PORT (default 0.0.0.0:8000, see settings.py) and prints every
-address other devices on the network can open, plus where the admin PIN comes from.
+address other devices on the network can open, plus where the admin PIN comes from and
+whether Tournament Manager is configured.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import uvicorn
 from .auth import AdminAuth
 from .live import LiveHub
 from .main import app
+from .tm import TMService
 
 GRACEFUL_SHUTDOWN_SECONDS = 2
 
@@ -42,7 +44,8 @@ def lan_ipv4_addresses() -> list[str]:
     return addresses
 
 
-def banner(host: str, port: int, admin_line: str | None = None) -> str:
+def banner(host: str, port: int, *notes: str | None) -> str:
+    """Startup text; `notes` (admin PIN, Tournament Manager lines) go before "Press Ctrl+C"."""
     if host in ("0.0.0.0", ""):
         urls = [f"http://{ip}:{port}" for ip in lan_ipv4_addresses()]
         urls.append(f"http://localhost:{port}")
@@ -54,8 +57,7 @@ def banner(host: str, port: int, admin_line: str | None = None) -> str:
     lines += [f"    {url}" for url in urls]
     if host in ("0.0.0.0", "") and len(urls) == 1:
         lines.append("    (no LAN address found - is Wi-Fi/Ethernet connected?)")
-    if admin_line:
-        lines.append(admin_line)
+    lines += [note for note in notes if note]
     lines += ["Press Ctrl+C to stop.", ""]
     return "\n".join(lines)
 
@@ -67,10 +69,17 @@ class LanServer(uvicorn.Server):
     so closing the hub there alone would leave Ctrl+C waiting on SSE clients.
     """
 
-    def __init__(self, config: uvicorn.Config, hub: LiveHub, auth: AdminAuth | None = None) -> None:
+    def __init__(
+        self,
+        config: uvicorn.Config,
+        hub: LiveHub,
+        auth: AdminAuth | None = None,
+        tm: TMService | None = None,
+    ) -> None:
         super().__init__(config)
         self._hub = hub
         self._auth = auth
+        self._tm = tm
 
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         self._hub.close_threadsafe()
@@ -84,7 +93,8 @@ class LanServer(uvicorn.Server):
                 for sock in server.sockets:
                     port = sock.getsockname()[1]
             admin_line = self._auth.startup_line() if self._auth else None
-            print(banner(self.config.host, port, admin_line), flush=True)
+            tm_line = self._tm.startup_line() if self._tm else None
+            print(banner(self.config.host, port, admin_line, tm_line), flush=True)
 
 
 def main() -> None:
@@ -98,7 +108,9 @@ def main() -> None:
     )
     auth: AdminAuth = app.state.auth
     auth.log_on_startup = False  # the banner shows the PIN line instead
-    server = LanServer(config, app.state.hub, auth)
+    tm: TMService = app.state.tm
+    tm.log_on_startup = False  # ... and the Tournament Manager line
+    server = LanServer(config, app.state.hub, auth, tm)
     try:
         server.run()
     except KeyboardInterrupt:  # uvicorn re-raises the captured SIGINT after a clean shutdown

@@ -5,6 +5,7 @@ import { applyLockState } from "./setup.js";
 import { initDraft, applyDraftToInputs, applySetupAccess } from "./draft.js";
 import { initUploads, renderUploads, renderUploadAccess } from "./uploads.js";
 import { initAdmin, renderAdmin } from "./admin.js";
+import { initTm, renderTm } from "./tm.js";
 import { startLive } from "./live.js";
 import { renderSchedule } from "./render/schedule.js";
 import { renderScheduleSelect } from "./render/scheduleSelect.js";
@@ -36,11 +37,13 @@ subscribe(renderConnection, ["connection"]);
 subscribe(renderAdmin, ["ui"]);
 subscribe(applySetupAccess, ["ui"]);
 subscribe(renderUploadAccess, ["ui"]);
+subscribe(renderTm, ["state", "ui", "tm"]);
 
 initDraft();
 initUploads();
 initNoShowToggleTracking();
 initAdmin();
+initTm();
 
 els.generateBtn.addEventListener("click", generateSchedule);
 els.printBtn.addEventListener("click", printSchedule);

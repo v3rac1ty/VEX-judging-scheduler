@@ -16,6 +16,7 @@ from tm_fixture import make_matches
 
 TZ = ZoneInfo("America/Chicago")
 ADMIN_PIN = "246813"
+NO_TM = {"tm_url": None, "tm_client_id": None, "tm_client_secret": None, "tm_api_key": None}
 
 MakeClient = Callable[..., TestClient]
 
@@ -51,8 +52,8 @@ def data_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def settings(data_dir: Path, tz: ZoneInfo) -> Settings:
-    # An explicit PIN keeps tests independent of JUDGING_ADMIN_PIN / .env on the dev machine.
-    return Settings(data_dir=data_dir, event_tz=tz, admin_pin=ADMIN_PIN)
+    # An explicit PIN and no TM keep tests independent of JUDGING_* / .env on the dev machine.
+    return Settings(data_dir=data_dir, event_tz=tz, admin_pin=ADMIN_PIN, **NO_TM)
 
 
 def sign_in(client: TestClient, pin: str = ADMIN_PIN) -> TestClient:

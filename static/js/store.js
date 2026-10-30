@@ -4,6 +4,7 @@
 //   draft       shared setup form: judge pairs, times, uploaded texts, event stats
 //               (server-owned, own `revision` counter)
 //   connection  live-sync status for the header pill (per device)
+//   tm          Tournament Manager source status (server-owned, shared; null until known)
 //   ui          per-device prefs: team search, which schedule this device views, and
 //               whether this device is signed in as admin (never shared or persisted)
 //
@@ -37,15 +38,16 @@ const saveViewScheduleId = (id) => {
 
 let ui = { search: "", viewScheduleId: loadViewScheduleId(), isAdmin: false };
 let connection = { status: "connecting", clients: 0 };
+let tm = null;
 
-const ALL = ["state", "draft", "connection", "ui"];
+const ALL = ["state", "draft", "connection", "ui", "tm"];
 const subscribers = new Map(); // fn -> Set of slices it cares about
 
 const notify = (changed) => {
   subscribers.forEach((deps, fn) => {
     if (!changed.some((slice) => deps.has(slice))) return;
     try {
-      fn(state, ui, draft, connection);
+      fn(state, ui, draft, connection, tm);
     } catch (error) {
       console.error("Subscriber failed", error);
     }
@@ -56,6 +58,7 @@ export const getState = () => state;
 export const getUi = () => ui;
 export const getDraft = () => draft;
 export const getConnection = () => connection;
+export const getTm = () => tm;
 
 const revisionOf = (value) => {
   const n = Number(value?.revision);
@@ -180,7 +183,18 @@ export const setConnection = (partial) => {
 };
 
 /**
- * Register a render function called as fn(state, ui, draft, connection).
+ * Replace the Tournament Manager status (SSE `tm` event, fetch/poll responses,
+ * GET /api/tm/status). The status carries no revision, so the latest arrival wins.
+ */
+export const setTm = (next) => {
+  if (!next || typeof next !== "object" || Array.isArray(next)) return false;
+  tm = next;
+  notify(["tm"]);
+  return true;
+};
+
+/**
+ * Register a render function called as fn(state, ui, draft, connection, tm).
  * `slices` limits which kinds of change trigger it (default: all).
  * Returns an unsubscribe function.
  */

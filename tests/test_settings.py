@@ -6,6 +6,7 @@ import pytest
 
 from judging.settings import (
     DATA_DIR,
+    TM_AUTH_URL,
     Settings,
     is_valid_admin_pin,
     load_dotenv,
@@ -161,3 +162,83 @@ def test_admin_pin_not_in_repr(tmp_path):
     assert "987654" not in repr(settings)
     assert settings.admin_pin_path == tmp_path / "admin_pin.txt"
     assert settings.session_key_path == tmp_path / "session_key"
+
+
+# ------------------------------------------------------------- tournament manager
+
+TM_ENV = (
+    "JUDGING_TM_URL",
+    "JUDGING_TM_CLIENT_ID",
+    "JUDGING_TM_CLIENT_SECRET",
+    "JUDGING_TM_API_KEY",
+    "JUDGING_TM_DIVISION",
+    "JUDGING_TM_POLL_SECONDS",
+    "JUDGING_TM_AUTH_URL",
+)
+
+
+@pytest.fixture
+def tm_env(monkeypatch):
+    for name in TM_ENV:
+        monkeypatch.delenv(name, raising=False)
+    return monkeypatch
+
+
+def test_tm_defaults_when_unset(tm_env, tmp_path):
+    settings = Settings(data_dir=tmp_path)
+    assert settings.tm_url is None and settings.tm_configured is False
+    assert (settings.tm_division, settings.tm_poll_seconds) == (1, 60)
+    assert settings.tm_auth_url == TM_AUTH_URL == "https://auth.vextm.dwabtech.com/oauth2/token"
+    assert settings.tm_missing == list(TM_ENV[:4])
+
+
+def test_tm_from_env_and_secrets_hidden_from_repr(tm_env, tmp_path):
+    tm_env.setenv("JUDGING_TM_URL", " http://192.168.1.50:8080/ ")
+    tm_env.setenv("JUDGING_TM_CLIENT_ID", "id-Aa11")
+    tm_env.setenv("JUDGING_TM_CLIENT_SECRET", "secret-Bb22")
+    tm_env.setenv("JUDGING_TM_API_KEY", "key-Cc33")
+    tm_env.setenv("JUDGING_TM_DIVISION", "2")
+    tm_env.setenv("JUDGING_TM_POLL_SECONDS", "90")
+    settings = Settings(data_dir=tmp_path)
+    assert settings.tm_url == "http://192.168.1.50:8080"
+    assert settings.tm_configured and settings.tm_missing == []
+    assert (settings.tm_division, settings.tm_poll_seconds) == (2, 90)
+    text = repr(settings)
+    assert "192.168.1.50" in text
+    for secret in ("id-Aa11", "secret-Bb22", "key-Cc33"):
+        assert secret not in text
+
+
+@pytest.mark.parametrize("raw", ["59", "0", "-60", "abc", "60.5"])
+def test_tm_poll_seconds_below_60_fails_startup(tm_env, raw):
+    tm_env.setenv("JUDGING_TM_POLL_SECONDS", raw)
+    with pytest.raises(ValueError, match="JUDGING_TM_POLL_SECONDS.*at least 60"):
+        Settings()
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "one", "1.5"])
+def test_tm_division_must_be_positive(tm_env, raw):
+    tm_env.setenv("JUDGING_TM_DIVISION", raw)
+    with pytest.raises(ValueError, match="JUDGING_TM_DIVISION"):
+        Settings()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["192.168.1.50:8080", "ftp://tm.local", "http://", "http://admin:hunter2@tm.local",
+     "http://tm.local:99999", "http://tm.local/?x=1"],
+)
+def test_tm_url_is_validated_without_echoing_it(tm_env, raw):
+    tm_env.setenv("JUDGING_TM_URL", raw)
+    with pytest.raises(ValueError, match="JUDGING_TM_URL") as caught:
+        Settings()
+    assert "hunter2" not in str(caught.value)
+
+
+def test_tm_values_are_validated_when_injected(tmp_path):
+    with pytest.raises(ValueError, match="at least 60"):
+        Settings(data_dir=tmp_path, tm_poll_seconds=30)
+    with pytest.raises(ValueError, match="division"):
+        Settings(data_dir=tmp_path, tm_division=0)
+    with pytest.raises(ValueError, match="TM URL"):
+        Settings(data_dir=tmp_path, tm_url="tm.local")

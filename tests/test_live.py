@@ -208,6 +208,8 @@ def test_sse_end_to_end_with_real_server(settings, generate_payload):
             kind, draft = next(events)
             assert kind == "draft" and draft["full"] is True and draft["changes"]["judge_pairs"] == "4"
             assert next(events) == ("presence", {"clients": 1})
+            kind, tm = next(events)  # always sent, so the page knows whether TM is set up
+            assert kind == "tm" and tm["configured"] is False
 
             assert http.post("/api/generate", json=generate_payload).status_code == 200
             kind, state = next(events)

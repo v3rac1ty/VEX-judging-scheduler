@@ -389,3 +389,48 @@ class DraftPatch(BaseModel):
             else:
                 raise ValueError(f"event_stats.{key} must be a number.")
         return cleaned
+
+
+# ------------------------------------------------------------- tournament manager
+
+TM_TARGETS = ("match_schedule", "final_schedule")
+
+
+def _tm_target(value: Any) -> str:
+    if value not in TM_TARGETS:
+        raise ValueError('target must be "match_schedule" or "final_schedule".')
+    return value  # type: ignore[no-any-return]
+
+
+class TMFetchRequest(BaseModel):
+    """`POST /api/tm/fetch` body: which upload slot TM's match list goes into."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: Literal["match_schedule", "final_schedule"]
+
+    @field_validator("target", mode="before")
+    @classmethod
+    def _target(cls, value: Any) -> str:
+        return _tm_target(value)
+
+
+class TMPollRequest(BaseModel):
+    """`POST /api/tm/poll` body: turn auto-update from TM on or off for one slot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: Literal["match_schedule", "final_schedule"]
+    enabled: bool
+
+    @field_validator("target", mode="before")
+    @classmethod
+    def _target(cls, value: Any) -> str:
+        return _tm_target(value)
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _enabled(cls, value: Any) -> bool:
+        if not isinstance(value, bool):
+            raise ValueError("enabled must be true or false.")
+        return value

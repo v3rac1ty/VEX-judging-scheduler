@@ -1,7 +1,7 @@
-// Server-Sent Events client: pushes `state`, `draft` and `presence` events into
+// Server-Sent Events client: pushes `state`, `draft`, `presence` and `tm` events into
 // the store. EventSource reconnects by itself; on every (re)connect the server
 // re-sends the full state and draft, so no extra fetch is needed.
-import { setState, applyDraftFull, applyDraftPatch, setConnection } from "./store.js";
+import { setState, applyDraftFull, applyDraftPatch, setConnection, setTm } from "./store.js";
 import { refreshAdminStatus } from "./admin.js";
 
 const RECONNECT_MS = 2000;
@@ -59,6 +59,11 @@ export const startLive = () => {
       if (data && Number.isFinite(Number(data.clients))) {
         setConnection({ clients: Number(data.clients) });
       }
+    });
+
+    source.addEventListener("tm", (event) => {
+      const data = parse(event);
+      if (data) setTm(data);
     });
   };
 

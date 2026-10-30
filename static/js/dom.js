@@ -52,6 +52,22 @@ export const els = {
   finalMatchSchedule: $("finalMatchSchedule"),
   finalPreview: $("finalPreview"),
 
+  // Tournament Manager source controls, keyed by draft target.
+  tm: {
+    match_schedule: {
+      box: $("tmMatchBox"),
+      fetch: $("tmMatchFetch"),
+      auto: $("tmMatchAuto"),
+      status: $("tmMatchStatus"),
+    },
+    final_schedule: {
+      box: $("tmFinalBox"),
+      fetch: $("tmFinalFetch"),
+      auto: $("tmFinalAuto"),
+      status: $("tmFinalStatus"),
+    },
+  },
+
   generateBtn: $("generateBtn"),
   printBtn: $("printBtn"),
   generateNoShowBtn: $("generateNoShowBtn"),

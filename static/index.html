@@ -126,6 +126,16 @@
             <span>or click to browse</span>
           </div>
         </div>
+        <div id="tmMatchBox" class="tm-source admin-only" data-target="match_schedule" hidden>
+          <div class="tm-controls">
+            <button id="tmMatchFetch" class="secondary tm-fetch" type="button">Fetch from TM</button>
+            <label class="tm-toggle">
+              <input id="tmMatchAuto" class="tm-switch" type="checkbox" role="switch" />
+              <span>Auto-update</span>
+            </label>
+          </div>
+          <p id="tmMatchStatus" class="tm-status" role="status" aria-live="polite"></p>
+        </div>
         <p id="matchPreview" class="upload-preview" aria-live="polite"></p>
         <label class="full">
           Match schedule JSON or log
@@ -166,6 +176,16 @@
               <strong>Drop final schedule here</strong>
               <span>or click to browse</span>
             </div>
+          </div>
+          <div id="tmFinalBox" class="tm-source admin-only" data-target="final_schedule" hidden>
+            <div class="tm-controls">
+              <button id="tmFinalFetch" class="secondary tm-fetch" type="button">Fetch from TM</button>
+              <label class="tm-toggle">
+                <input id="tmFinalAuto" class="tm-switch" type="checkbox" role="switch" />
+                <span>Auto-update</span>
+              </label>
+            </div>
+            <p id="tmFinalStatus" class="tm-status" role="status" aria-live="polite"></p>
           </div>
           <p id="finalPreview" class="upload-preview" aria-live="polite"></p>
           <label class="full">

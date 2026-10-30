@@ -28,9 +28,12 @@ from .models import (
     GenerateRequest,
     SnapshotRequest,
     TeamRequest,
+    TMFetchRequest,
+    TMPollRequest,
 )
 from .settings import Settings
 from .store import StateStore, StateView
+from .tm import TMFetchResult, TMPollResult, TMService, TMStatus, run_in_daemon_thread
 
 router = APIRouter()
 
@@ -43,13 +46,19 @@ class AppContext:
     store: StateStore
     draft: DraftStore
     hub: LiveHub
+    tm: TMService
     rng: random.Random | None
 
 
 def get_context(request: Request) -> AppContext:
     state = request.app.state
     return AppContext(
-        settings=state.settings, store=state.store, draft=state.draft, hub=state.hub, rng=state.rng
+        settings=state.settings,
+        store=state.store,
+        draft=state.draft,
+        hub=state.hub,
+        tm=state.tm,
+        rng=state.rng,
     )
 
 
@@ -127,6 +136,7 @@ def snapshot_print(
 def reset_all(ctx: AppContext = Depends(get_context)) -> StateView:
     view = ctx.store.reset()
     ctx.draft.reset()
+    ctx.tm.reset()
     return view
 
 
@@ -137,3 +147,23 @@ def generate_no_show(
     req = payload or GenerateNoShowRequest()
     tz = ctx.settings.event_tz
     return ctx.store.update(lambda state: services.generate_no_show(state, req, tz, ctx.rng))
+
+
+# ------------------------------------------------------------- tournament manager
+# Not configured -> 409; a TM failure -> TMError -> 502 with its safe message (main.py).
+
+
+@router.get("/api/tm/status", response_model=None, dependencies=ADMIN_ONLY)
+def tm_status(ctx: AppContext = Depends(get_context)) -> TMStatus:
+    return ctx.tm.status()
+
+
+@router.post("/api/tm/fetch", response_model=None, dependencies=ADMIN_ONLY)
+async def tm_fetch(payload: TMFetchRequest, ctx: AppContext = Depends(get_context)) -> TMFetchResult:
+    # A daemon thread rather than the threadpool, so Ctrl+C never waits on a slow TM.
+    return await run_in_daemon_thread(lambda: ctx.tm.fetch(payload.target))
+
+
+@router.post("/api/tm/poll", response_model=None, dependencies=ADMIN_ONLY)
+def tm_poll(payload: TMPollRequest, ctx: AppContext = Depends(get_context)) -> TMPollResult:
+    return ctx.tm.set_polling(payload.target, payload.enabled)

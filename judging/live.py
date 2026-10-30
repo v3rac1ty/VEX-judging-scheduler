@@ -14,6 +14,9 @@ Per client:
   grows past `draft_queue_limit`, it is discarded and the client is sent one
   full draft instead.
 - presence: the latest client count.
+- tm: Tournament Manager status (tm.py). The hub keeps the latest status message
+  itself (with a sequence number), so it is also sent once on connect, after
+  presence; a client that falls behind gets only the newest one.
 One asyncio.Event wakes the client's generator for any of the above.
 """
 from __future__ import annotations
@@ -21,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from collections import deque
 from collections.abc import AsyncIterator, Callable
 from typing import Any
@@ -45,7 +49,7 @@ def _draft_event(draft: dict[str, Any]) -> tuple[int, str]:
 
 class _Client:
     __slots__ = ("wake", "closed", "state", "state_revision", "drafts", "draft_revision",
-                 "needs_full_draft", "presence")
+                 "needs_full_draft", "presence", "tm_pending", "tm_seq")
 
     def __init__(self) -> None:
         self.wake = asyncio.Event()
@@ -56,10 +60,17 @@ class _Client:
         self.draft_revision = -1  # last draft revision sent
         self.needs_full_draft = False
         self.presence: str | None = None
+        self.tm_pending = False  # a newer TM status than tm_seq was published
+        self.tm_seq = -1  # sequence number of the last TM status sent
 
     def has_pending(self) -> bool:
         return bool(
-            self.closed or self.state or self.drafts or self.needs_full_draft or self.presence
+            self.closed
+            or self.state
+            or self.drafts
+            or self.needs_full_draft
+            or self.presence
+            or self.tm_pending
         )
 
 
@@ -78,6 +89,8 @@ class LiveHub:
         self._clients: set[_Client] = set()
         self._client_count = 0  # mirrors len(_clients); read from worker threads
         self._closed = False
+        self._tm_lock = threading.Lock()
+        self._tm: tuple[int, str] | None = None  # (sequence, message) of the latest TM status
 
     # ------------------------------------------------------------ lifecycle
 
@@ -118,6 +131,15 @@ class LiveHub:
         message = sse_message("draft", event)
         self._call_soon(self._deliver_draft, revision, message, bool(event.get("full")))
 
+    def publish_tm(self, status: dict[str, Any]) -> None:
+        """Latest Tournament Manager status; kept even with no clients (sent on connect)."""
+        message = sse_message("tm", status)
+        with self._tm_lock:
+            seq = self._tm[0] + 1 if self._tm else 0
+            self._tm = (seq, message)
+        if self._client_count:
+            self._call_soon(self._deliver_tm, seq)
+
     def _call_soon(self, callback: Callable[..., None], *args: Any) -> None:
         loop = self._loop
         if loop is None or loop.is_closed():
@@ -150,6 +172,21 @@ class LiveHub:
                 client.drafts.clear()
                 client.needs_full_draft = True
             client.wake.set()
+
+    def _deliver_tm(self, seq: int) -> None:
+        for client in self._clients:
+            if seq > client.tm_seq:
+                client.tm_pending = True
+                client.wake.set()
+
+    def _take_tm(self, client: _Client) -> str | None:
+        """The latest TM status message if `client` has not been sent it yet."""
+        client.tm_pending = False
+        latest = self._tm
+        if latest is None or latest[0] <= client.tm_seq:
+            return None
+        client.tm_seq = latest[0]
+        return latest[1]
 
     def _broadcast_presence(self) -> None:
         message = sse_message("presence", {"clients": len(self._clients)})
@@ -204,6 +241,9 @@ class LiveHub:
             if client.presence is not None:  # set by _register (unless a newer count replaced it)
                 message, client.presence = client.presence, None
                 yield message
+            tm_message = self._take_tm(client)
+            if tm_message is not None:
+                yield tm_message
 
             while True:
                 if not client.has_pending():
@@ -240,6 +280,11 @@ class LiveHub:
                 if client.presence is not None:
                     message, client.presence = client.presence, None
                     yield message
+
+                if client.tm_pending:
+                    tm_message = self._take_tm(client)
+                    if tm_message is not None:
+                        yield tm_message
         finally:
             # Runs on disconnect (cancellation), aclose() and hub shutdown. No awaits here.
             self._unregister(client)
