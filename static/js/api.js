@@ -3,6 +3,20 @@
 const NETWORK_ERROR =
   "Cannot reach the server. Check your network connection and try again.";
 
+// Shown whenever an admin-only action is attempted without a valid session.
+export const ADMIN_REQUIRED_MESSAGE =
+  "Admin sign-in required. Use \"Admin sign-in\" at the top of the page.";
+
+// The server's exact reply for a missing/expired admin session.
+const ADMIN_REQUIRED_DETAIL = "Admin PIN required.";
+
+// Registered by admin.js (api.js must not import the store). Called once per
+// such response; callers never retry, they just surface result.error.
+let adminRequiredHandler = null;
+export const setAdminRequiredHandler = (handler) => {
+  adminRequiredHandler = handler;
+};
+
 /** Turn a FastAPI error body (string, validation array, or other) into text. */
 const describeDetail = (detail) => {
   if (typeof detail === "string") {
@@ -51,6 +65,19 @@ const request = async (method, path, body) => {
   }
 
   if (!response.ok) {
+    if (response.status === 401 && parsedOk && data?.detail === ADMIN_REQUIRED_DETAIL) {
+      try {
+        adminRequiredHandler?.();
+      } catch (error) {
+        console.error("Admin handler failed", error);
+      }
+      return {
+        ok: false,
+        status: 401,
+        data,
+        error: ADMIN_REQUIRED_MESSAGE,
+      };
+    }
     const detail = parsedOk ? describeDetail(data?.detail) : "";
     return {
       ok: false,

@@ -171,6 +171,13 @@ def sse_events(lines: Iterator[str]) -> Iterator[tuple[str, dict]]:
             data = line[len("data: "):]
 
 
+def admin_cookies(base: str, pin: str) -> httpx.Cookies:
+    """Session cookie for a real server, so httpx clients can call admin-only routes."""
+    response = httpx.post(f"{base}/api/admin/login", json={"pin": pin}, timeout=5)
+    assert response.status_code == 200, response.text
+    return response.cookies
+
+
 def test_sse_end_to_end_with_real_server(settings, generate_payload):
     app = create_app(settings, rng=random.Random(3))
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -189,7 +196,8 @@ def test_sse_end_to_end_with_real_server(settings, generate_payload):
             time.sleep(0.02)
 
         base = f"http://127.0.0.1:{port}"
-        with httpx.Client(base_url=base, timeout=5) as http, http.stream("GET", "/api/events") as stream:
+        cookies = admin_cookies(base, settings.admin_pin)
+        with httpx.Client(base_url=base, timeout=5, cookies=cookies) as http, http.stream("GET", "/api/events") as stream:
             assert stream.status_code == 200
             assert stream.headers["content-type"].startswith("text/event-stream")
             assert stream.headers["cache-control"] == "no-cache"

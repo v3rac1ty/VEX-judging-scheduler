@@ -2,8 +2,9 @@
 import { els } from "./dom.js";
 import { subscribe, setUi, setConnection } from "./store.js";
 import { applyLockState } from "./setup.js";
-import { initDraft, applyDraftToInputs } from "./draft.js";
-import { initUploads, renderUploads } from "./uploads.js";
+import { initDraft, applyDraftToInputs, applySetupAccess } from "./draft.js";
+import { initUploads, renderUploads, renderUploadAccess } from "./uploads.js";
+import { initAdmin, renderAdmin } from "./admin.js";
 import { startLive } from "./live.js";
 import { renderSchedule } from "./render/schedule.js";
 import { renderScheduleSelect } from "./render/scheduleSelect.js";
@@ -24,7 +25,7 @@ import {
 
 // Every render is a subscriber: (state, ui, draft, connection) -> DOM, limited
 // to the slices it reads so frequent draft/connection updates stay cheap.
-subscribe((state) => applyLockState(state), ["state"]);
+subscribe((state) => applyLockState(state), ["state", "ui"]);
 subscribe(renderScheduleSelect, ["state", "ui"]);
 subscribe(renderSchedule, ["state", "ui"]);
 subscribe(renderPrint, ["state", "ui"]);
@@ -32,10 +33,14 @@ subscribe((state) => renderNoShow(state), ["state"]);
 subscribe((_state, _ui, draft) => applyDraftToInputs(draft), ["draft"]);
 subscribe((_state, _ui, draft) => renderUploads(draft), ["draft"]);
 subscribe(renderConnection, ["connection"]);
+subscribe(renderAdmin, ["ui"]);
+subscribe(applySetupAccess, ["ui"]);
+subscribe(renderUploadAccess, ["ui"]);
 
 initDraft();
 initUploads();
 initNoShowToggleTracking();
+initAdmin();
 
 els.generateBtn.addEventListener("click", generateSchedule);
 els.printBtn.addEventListener("click", printSchedule);
@@ -48,7 +53,8 @@ els.teamSearch.addEventListener("input", onSearchInput);
 els.schedule.addEventListener("click", onScheduleClick);
 els.noShow.addEventListener("click", onNoShowClick);
 
-// Browsers may restore a previous search value on reload.
+// Browsers may restore a previous search value on reload. (This also runs every
+// ui subscriber once, so the signed-out view is applied before the status arrives.)
 setUi({ search: els.teamSearch.value });
 setConnection({ status: "connecting" });
 

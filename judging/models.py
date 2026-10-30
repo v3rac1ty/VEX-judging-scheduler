@@ -197,6 +197,22 @@ class ActiveScheduleRequest(BaseModel):
         return schedule_id
 
 
+class AdminLoginRequest(BaseModel):
+    """`POST /api/admin/login` body. The PIN is compared as given: no trimming."""
+
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+
+    pin: str = ""
+
+    @field_validator("pin", mode="before")
+    @classmethod
+    def _pin(cls, value: Any) -> str:
+        pin = _text(value)
+        if not pin:
+            raise ValueError("Enter the admin PIN.")
+        return pin
+
+
 class SnapshotRequest(BaseModel):
     label: str = "Printed schedule"
     # Schedule to print; omitted -> the active schedule.

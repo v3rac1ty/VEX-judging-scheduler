@@ -14,7 +14,7 @@ import uvicorn
 from judging.__main__ import LanServer
 from judging.body_limit import MAX_BODY_BYTES, BodySizeLimitMiddleware
 from judging.main import create_app
-from test_live import sse_events
+from test_live import admin_cookies, sse_events
 
 TOO_LARGE = {"detail": "Request too large."}
 
@@ -123,7 +123,8 @@ def test_real_server_rejects_chunked_upload_and_sse_still_streams(settings):
                 for i in range(0, len(body), 1 << 16):
                     yield body[i:i + (1 << 16)]
 
-            with httpx.Client(base_url=base, timeout=5) as uploader:
+            cookies = admin_cookies(base, settings.admin_pin)
+            with httpx.Client(base_url=base, timeout=5, cookies=cookies) as uploader:
                 try:
                     response = uploader.patch(
                         "/api/draft", content=chunks(), headers={"content-type": "application/json"}

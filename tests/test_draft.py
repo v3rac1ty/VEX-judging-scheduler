@@ -201,8 +201,8 @@ def test_reset_clears_draft(client, match_text, data_dir):
     assert ok(client.get("/api/draft"))["revision"] == revision + 1
 
 
-def test_draft_survives_restart_and_corrupt_file(settings, data_dir, match_text):
-    client = TestClient(create_app(settings, rng=random.Random(1)))
+def test_draft_survives_restart_and_corrupt_file(settings, make_client, data_dir, match_text):
+    client = make_client(rng=random.Random(1))
     patch(client, {"match_schedule": {"text": match_text, "name": "a.json"}})
     before = ok(client.get("/api/draft"))
     assert ok(TestClient(create_app(settings)).get("/api/draft")) == before

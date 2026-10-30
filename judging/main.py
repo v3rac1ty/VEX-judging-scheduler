@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -12,6 +13,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .auth import AdminAuth
+from .auth import router as admin_router
 from .body_limit import BodySizeLimitMiddleware
 from .draft import DraftStore
 from .live import LiveHub
@@ -57,9 +60,13 @@ async def _service_error_handler(_: Request, exc: ServiceError) -> JSONResponse:
 def create_app(settings: Settings | None = None, *, rng: random.Random | None = None) -> FastAPI:
     settings = settings or Settings()
     hub = LiveHub()
+    auth = AdminAuth(settings)  # reads/creates the PIN and key files on first use, not here
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        line = auth.startup_line()  # resolve the secrets now so a bad data dir fails startup
+        if auth.log_on_startup:
+            logging.getLogger("uvicorn.error").info(line)
         hub.attach(asyncio.get_running_loop())
         try:
             yield
@@ -71,6 +78,7 @@ def create_app(settings: Settings | None = None, *, rng: random.Random | None = 
     app.state.store = StateStore(settings)
     app.state.draft = DraftStore(settings)
     app.state.hub = hub
+    app.state.auth = auth
     app.state.rng = rng
     app.state.store.add_listener(hub.publish_state)
     app.state.draft.add_listener(hub.publish_draft)
@@ -78,6 +86,7 @@ def create_app(settings: Settings | None = None, *, rng: random.Random | None = 
     app.add_exception_handler(ServiceError, _service_error_handler)  # type: ignore[arg-type]
     app.add_middleware(BodySizeLimitMiddleware)
     app.mount("/static", StaticFiles(directory=settings.static_dir), name="static")
+    app.include_router(admin_router)
     app.include_router(router)
     return app
 

@@ -20,7 +20,7 @@ def _old_slots(first_match):
     ]
 
 
-def test_old_format_state_migrates(settings, data_dir, first_match):
+def test_old_format_state_migrates(make_client, data_dir, first_match):
     slots = _old_slots(first_match)
     old_state = {
         "config": {"judge_pairs": 1, "slot_minutes": 10, "block_minutes": 8},
@@ -37,7 +37,7 @@ def test_old_format_state_migrates(settings, data_dir, first_match):
     }
     (data_dir / "state.json").write_text(json.dumps(old_state))
     (data_dir / "schedule-1.json").write_text("{}")  # legacy archive location
-    client = TestClient(create_app(settings))
+    client = make_client()
 
     state = client.get("/api/state").json()
     assert state["revision"] == 0
@@ -72,16 +72,18 @@ def test_corrupt_state_is_set_aside(settings, data_dir):
     assert list(data_dir.glob("state.corrupt-*.json"))
 
 
-def test_state_survives_restart_and_writes_no_temp_files(settings, data_dir, generate_payload):
-    client = TestClient(create_app(settings, rng=random.Random(1)))
+def test_state_survives_restart_and_writes_no_temp_files(
+    settings, make_client, data_dir, generate_payload
+):
+    client = make_client(rng=random.Random(1))
     generated = client.post("/api/generate", json=generate_payload).json()
     reloaded = StateStore(settings).view()
     assert reloaded == generated
     assert not list(data_dir.rglob("*.tmp"))
 
 
-def test_concurrent_actions_all_persist(settings, generate_payload):
-    client = TestClient(create_app(settings, rng=random.Random(2)))
+def test_concurrent_actions_all_persist(settings, make_client, generate_payload):
+    client = make_client(rng=random.Random(2))
     assert client.post("/api/generate", json=generate_payload).status_code == 200
     printed = client.post("/api/snapshot-print", json={}).json()
     start_revision = printed["revision"]

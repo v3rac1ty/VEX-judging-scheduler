@@ -1,7 +1,7 @@
 """LAN runner: `python -m judging`.
 
 Serves on JUDGING_HOST:JUDGING_PORT (default 0.0.0.0:8000, see settings.py) and prints every
-address other devices on the network can open.
+address other devices on the network can open, plus where the admin PIN comes from.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from types import FrameType
 
 import uvicorn
 
+from .auth import AdminAuth
 from .live import LiveHub
 from .main import app
 
@@ -41,7 +42,7 @@ def lan_ipv4_addresses() -> list[str]:
     return addresses
 
 
-def banner(host: str, port: int) -> str:
+def banner(host: str, port: int, admin_line: str | None = None) -> str:
     if host in ("0.0.0.0", ""):
         urls = [f"http://{ip}:{port}" for ip in lan_ipv4_addresses()]
         urls.append(f"http://localhost:{port}")
@@ -53,6 +54,8 @@ def banner(host: str, port: int) -> str:
     lines += [f"    {url}" for url in urls]
     if host in ("0.0.0.0", "") and len(urls) == 1:
         lines.append("    (no LAN address found - is Wi-Fi/Ethernet connected?)")
+    if admin_line:
+        lines.append(admin_line)
     lines += ["Press Ctrl+C to stop.", ""]
     return "\n".join(lines)
 
@@ -64,9 +67,10 @@ class LanServer(uvicorn.Server):
     so closing the hub there alone would leave Ctrl+C waiting on SSE clients.
     """
 
-    def __init__(self, config: uvicorn.Config, hub: LiveHub) -> None:
+    def __init__(self, config: uvicorn.Config, hub: LiveHub, auth: AdminAuth | None = None) -> None:
         super().__init__(config)
         self._hub = hub
+        self._auth = auth
 
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         self._hub.close_threadsafe()
@@ -79,7 +83,8 @@ class LanServer(uvicorn.Server):
             for server in self.servers:  # report the real port when JUDGING_PORT=0
                 for sock in server.sockets:
                     port = sock.getsockname()[1]
-            print(banner(self.config.host, port), flush=True)
+            admin_line = self._auth.startup_line() if self._auth else None
+            print(banner(self.config.host, port, admin_line), flush=True)
 
 
 def main() -> None:
@@ -91,7 +96,9 @@ def main() -> None:
         log_level="info",
         timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
     )
-    server = LanServer(config, app.state.hub)
+    auth: AdminAuth = app.state.auth
+    auth.log_on_startup = False  # the banner shows the PIN line instead
+    server = LanServer(config, app.state.hub, auth)
     try:
         server.run()
     except KeyboardInterrupt:  # uvicorn re-raises the captured SIGINT after a clean shutdown

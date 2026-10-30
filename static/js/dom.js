@@ -34,6 +34,15 @@ export const els = {
   connPill: $("connPill"),
   connLabel: $("connLabel"),
 
+  adminBtn: $("adminBtn"),
+  adminBtnLabel: $("adminBtnLabel"),
+  adminDialog: $("adminDialog"),
+  adminForm: $("adminForm"),
+  adminPin: $("adminPin"),
+  adminError: $("adminError"),
+  adminSubmit: $("adminSubmit"),
+  adminCancel: $("adminCancel"),
+
   matchSchedule: $("matchSchedule"),
   matchPreview: $("matchPreview"),
   dropzone: $("dropzone"),

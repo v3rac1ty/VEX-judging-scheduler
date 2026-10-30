@@ -2,6 +2,7 @@
 // the store. EventSource reconnects by itself; on every (re)connect the server
 // re-sends the full state and draft, so no extra fetch is needed.
 import { setState, applyDraftFull, applyDraftPatch, setConnection } from "./store.js";
+import { refreshAdminStatus } from "./admin.js";
 
 const RECONNECT_MS = 2000;
 
@@ -16,11 +17,17 @@ const parse = (event) => {
 export const startLive = () => {
   let source = null;
   let retryTimer = null;
+  let connectedBefore = false;
 
   const open = () => {
     source = new EventSource("/api/events");
 
-    source.onopen = () => setConnection({ status: "live" });
+    source.onopen = () => {
+      setConnection({ status: "live" });
+      // The server may have restarted (or the PIN changed) while we were away.
+      if (connectedBefore) refreshAdminStatus();
+      connectedBefore = true;
+    };
 
     source.onerror = () => {
       setConnection({ status: "reconnecting" });

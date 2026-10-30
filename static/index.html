@@ -24,15 +24,26 @@
   <body>
     <div class="bg-gradient"></div>
     <header class="hero">
-      <div
-        id="connPill"
-        class="conn-pill"
-        data-status="connecting"
-        role="status"
-        aria-live="polite"
-      >
-        <span class="conn-dot" aria-hidden="true"></span>
-        <span id="connLabel">Connecting…</span>
+      <div class="hero-tools">
+        <div
+          id="connPill"
+          class="conn-pill"
+          data-status="connecting"
+          role="status"
+          aria-live="polite"
+        >
+          <span class="conn-dot" aria-hidden="true"></span>
+          <span id="connLabel">Connecting…</span>
+        </div>
+        <button id="adminBtn" class="admin-btn" type="button" aria-haspopup="dialog">
+          <svg class="admin-btn-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+            <path
+              fill="currentColor"
+              d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a1.5 1.5 0 0 0-1.5 1.5v6A1.5 1.5 0 0 0 4 15h8a1.5 1.5 0 0 0 1.5-1.5v-6A1.5 1.5 0 0 0 12 6h-.5V4.5A3.5 3.5 0 0 0 8 1Zm2 5H6V4.5a2 2 0 1 1 4 0V6Z"
+            />
+          </svg>
+          <span id="adminBtnLabel">Admin sign-in</span>
+        </button>
       </div>
       <div class="hero-content">
         <p class="eyebrow">Inspection Period Planner</p>
@@ -47,6 +58,7 @@
     <main class="layout">
       <section class="panel">
         <h2>Setup</h2>
+        <p class="admin-hint non-admin-only">Setup is managed by the admin.</p>
         <div class="grid">
           <label>
             Judge pairs
@@ -107,7 +119,7 @@
             </div>
           </div>
         </details>
-        <div class="dropzone" id="dropzone">
+        <div class="dropzone" id="dropzone" aria-disabled="true">
           <input id="fileInput" type="file" accept=".json,.log,.txt" />
           <div class="dropzone-content">
             <strong>Drop a .json or .log file here</strong>
@@ -119,7 +131,7 @@
           Match schedule JSON or log
           <textarea id="matchSchedule" rows="10" readonly></textarea>
         </label>
-        <div class="actions">
+        <div class="actions admin-only">
           <button id="generateBtn" class="primary">Generate schedule</button>
           <button id="printBtn" class="secondary" type="button">Print schedule</button>
           <button id="resetBtn" class="danger" type="button">Reset all</button>
@@ -147,7 +159,8 @@
         <h2>No-show recovery</h2>
         <div class="final-schedule">
           <h3>Final match schedule</h3>
-          <div class="dropzone" id="finalDropzone">
+          <p class="admin-hint non-admin-only">Setup is managed by the admin.</p>
+          <div class="dropzone admin-only" id="finalDropzone" aria-disabled="true">
             <input id="finalFileInput" type="file" accept=".json,.log,.txt" />
             <div class="dropzone-content">
               <strong>Drop final schedule here</strong>
@@ -160,7 +173,7 @@
             <textarea id="finalMatchSchedule" rows="6" readonly></textarea>
           </label>
           <p class="stat-note">Event statistics are set in the <strong>Setup</strong> panel and included automatically.</p>
-          <button id="generateNoShowBtn" class="secondary" type="button">
+          <button id="generateNoShowBtn" class="secondary admin-only" type="button">
             Generate no-show schedule
           </button>
         </div>
@@ -171,6 +184,38 @@
     <footer class="footer">
       <p>Built for fast, accurate inspection-period judging.</p>
     </footer>
+
+    <dialog
+      id="adminDialog"
+      class="admin-dialog"
+      aria-labelledby="adminDialogTitle"
+      aria-describedby="adminDialogDesc"
+    >
+      <form id="adminForm" class="admin-form" novalidate>
+        <h2 id="adminDialogTitle">Admin sign-in</h2>
+        <p id="adminDialogDesc" class="admin-dialog-desc">
+          Enter the admin PIN shown when the server started.
+        </p>
+        <label>
+          Admin PIN
+          <input
+            id="adminPin"
+            type="password"
+            inputmode="numeric"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            maxlength="12"
+            aria-describedby="adminError"
+          />
+        </label>
+        <p id="adminError" class="admin-error" role="alert"></p>
+        <div class="admin-dialog-actions">
+          <button id="adminCancel" class="secondary" type="button">Cancel</button>
+          <button id="adminSubmit" class="primary" type="submit">Sign in</button>
+        </div>
+      </form>
+    </dialog>
 
     <script type="module" src="/static/js/main.js"></script>
   </body>

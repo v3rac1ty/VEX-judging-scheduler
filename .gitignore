@@ -17,6 +17,8 @@ ENV/
 /data/*.json
 /data/*.tmp
 /data/schedules/
+/data/admin_pin.txt
+/data/session_key
 
 # OS files
 .DS_Store

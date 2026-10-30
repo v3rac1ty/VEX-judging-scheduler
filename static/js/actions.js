@@ -1,6 +1,6 @@
 // User-initiated operations. Each one posts to the API, then feeds any returned
 // state through setState() so every renderer stays in sync.
-import { api } from "./api.js";
+import { api, ADMIN_REQUIRED_MESSAGE } from "./api.js";
 import { els, setStatus } from "./dom.js";
 import { withBusy } from "./busy.js";
 import { getState, getUi, getDraft, setState, setUi } from "./store.js";
@@ -14,6 +14,13 @@ import { flushDraft, collectSetup, collectEventStats } from "./draft.js";
 // Guards against duplicate submits of the same logical action (e.g. the same
 // team's check-off) even after the button has been re-rendered.
 const inFlight = new Set();
+
+/** Admin-only actions: the controls are hidden for others, this is the backstop. */
+const requireAdmin = () => {
+  if (getUi().isAdmin) return true;
+  setStatus(ADMIN_REQUIRED_MESSAGE);
+  return false;
+};
 
 /** POST and, on success, apply returned state. Returns the response data or null. */
 const post = async (path, body, fallbackError) => {
@@ -37,6 +44,7 @@ export const loadInitialState = async () => {
 };
 
 export const generateSchedule = async () => {
+  if (!requireAdmin()) return;
   await withBusy(els.generateBtn, async () => {
     setStatus("Generating schedule...");
     // Make sure typed-but-unsent edits are in the draft before reading it.
@@ -62,6 +70,7 @@ export const generateSchedule = async () => {
 };
 
 export const generateNoShowSchedule = async () => {
+  if (!requireAdmin()) return;
   await withBusy(els.generateNoShowBtn, async () => {
     setStatus("Generating no-show schedule...");
     await flushDraft();
@@ -79,6 +88,7 @@ export const generateNoShowSchedule = async () => {
 };
 
 export const printSchedule = async () => {
+  if (!requireAdmin()) return;
   if (!hasSchedule(getState(), getUi())) {
     setStatus("Generate a schedule before printing.");
     return;
@@ -97,6 +107,7 @@ export const printSchedule = async () => {
 };
 
 export const resetAll = async () => {
+  if (!requireAdmin()) return;
   if (!window.confirm("Reset all schedules and no-show data?")) {
     return;
   }

@@ -6,9 +6,13 @@
 //   * the focused input is never overwritten;
 //   * an input with unsent or in-flight local edits is never overwritten
 //     (last writer wins once the PATCH lands).
-import { api } from "./api.js";
+//
+// Only the admin can edit the draft (PATCH /api/draft is admin-gated): for
+// everyone else the inputs are disabled, and nothing is ever sent. Signing out
+// (or an expired session) drops unsent edits so no debounced PATCH can 401 later.
 import { els, setStatus } from "./dom.js";
-import { getDraft, applyDraftPatch } from "./store.js";
+import { api, ADMIN_REQUIRED_MESSAGE } from "./api.js";
+import { getDraft, getUi, applyDraftPatch } from "./store.js";
 
 const DEBOUNCE_MS = 300;
 
@@ -66,7 +70,8 @@ const isDirty = (key) => pendingKeys.has(key) || (inFlight.get(key) || 0) > 0;
 export const applyDraftToInputs = (draft = getDraft()) => {
   if (!draft) return;
   FIELDS.forEach(({ key, path, el }) => {
-    if (el === document.activeElement || isDirty(key)) return;
+    // A disabled input cannot be edited, so focus no longer protects it.
+    if ((el === document.activeElement && !el.disabled) || isDirty(key)) return;
     const value = readPath(draft, path);
     const text = value == null ? "" : String(value);
     if (el.value !== text) {
@@ -78,10 +83,14 @@ export const applyDraftToInputs = (draft = getDraft()) => {
 const enqueue = (body, keys) => {
   keys.forEach((key) => inFlight.set(key, (inFlight.get(key) || 0) + 1));
   queue = queue.then(async () => {
-    const result = await api.patch("/api/draft", body);
+    // Signed out while this was queued: do not send (it would only 401).
+    const skipped = !getUi().isAdmin;
+    const result = skipped
+      ? { ok: false, status: 0, data: null, error: ADMIN_REQUIRED_MESSAGE }
+      : await api.patch("/api/draft", body);
     if (result.ok) {
       applyDraftPatch(result.data);
-    } else {
+    } else if (!skipped) {
       setStatus(result.error || "Could not save your changes.");
     }
     keys.forEach((key) => {
@@ -96,8 +105,20 @@ const enqueue = (body, keys) => {
   return queue;
 };
 
+/** Forget edits that have not been sent yet (their inputs snap back to the shared value). */
+const discardPending = () => {
+  clearTimeout(timer);
+  timer = null;
+  pending = {};
+  pendingKeys.clear();
+};
+
 /** Send any debounced edits now. Resolves once everything queued has landed. */
 export const flushDraft = () => {
+  if (!getUi().isAdmin) {
+    discardPending();
+    return queue;
+  }
   clearTimeout(timer);
   timer = null;
   if (!pendingKeys.size && !Object.keys(pending).length) {
@@ -112,15 +133,37 @@ export const flushDraft = () => {
 
 /** PATCH an arbitrary draft fragment (uploads) after flushing typed edits. */
 export const patchDraft = async (body) => {
+  if (!getUi().isAdmin) {
+    return { ok: false, status: 0, data: null, error: ADMIN_REQUIRED_MESSAGE };
+  }
   flushDraft();
   return enqueue(body, []);
 };
 
 const onInput = ({ key, path, el }) => {
+  if (!getUi().isAdmin) return;
   mergeInto(pending, nestPatch(path, el.value));
   pendingKeys.add(key);
   clearTimeout(timer);
   timer = setTimeout(flushDraft, DEBOUNCE_MS);
+};
+
+let lastAccess = null;
+
+/**
+ * Subscriber (ui): enable the setup inputs for the admin, disable them for
+ * everyone else. Signing out discards unsent edits; either way the inputs are
+ * re-synced to the shared draft since focus protection no longer applies.
+ */
+export const applySetupAccess = (_state, ui) => {
+  const admin = Boolean(ui?.isAdmin);
+  if (admin === lastAccess) return;
+  lastAccess = admin;
+  if (!admin) discardPending();
+  FIELDS.forEach(({ el }) => {
+    el.disabled = !admin;
+  });
+  applyDraftToInputs();
 };
 
 export const initDraft = () => {

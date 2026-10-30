@@ -4,6 +4,8 @@
 // draft; the server parses it and sends back a preview (counts, first match) and
 // the derived judging times. The read-only textareas just mirror the draft.
 import { els, setStatus } from "./dom.js";
+import { ADMIN_REQUIRED_MESSAGE } from "./api.js";
+import { getUi } from "./store.js";
 import { patchDraft } from "./draft.js";
 import { describePreview } from "./util.js";
 
@@ -13,6 +15,11 @@ const setupDropzone = ({ zone, input, onFile }) => {
 
   const handle = async (file) => {
     if (!file) return;
+    if (!getUi().isAdmin) {
+      setStatus(ADMIN_REQUIRED_MESSAGE);
+      input.value = "";
+      return;
+    }
     try {
       await onFile(file);
     } catch {
@@ -25,11 +32,12 @@ const setupDropzone = ({ zone, input, onFile }) => {
 
   zone.addEventListener("click", (event) => {
     // The hidden input lives inside the zone; ignore its own bubbled click.
-    if (event.target !== input) input.click();
+    if (event.target !== input && getUi().isAdmin) input.click();
   });
   zone.addEventListener("dragover", (event) => {
+    // Always cancel the default so a stray drop never navigates to the file.
     event.preventDefault();
-    zone.classList.add("is-dragging");
+    if (getUi().isAdmin) zone.classList.add("is-dragging");
   });
   zone.addEventListener("dragleave", () => zone.classList.remove("is-dragging"));
   zone.addEventListener("drop", (event) => {
@@ -57,6 +65,20 @@ export const initUploads = () => {
     zone: els.finalDropzone,
     input: els.finalFileInput,
     onFile: (file) => upload(file, "final_schedule", `Loaded final schedule ${file.name}.`),
+  });
+};
+
+/** Subscriber (ui): dropzones are usable by the admin only. */
+export const renderUploadAccess = (_state, ui) => {
+  const admin = Boolean(ui?.isAdmin);
+  [
+    [els.dropzone, els.fileInput],
+    [els.finalDropzone, els.finalFileInput],
+  ].forEach(([zone, input]) => {
+    if (!zone || !input) return;
+    zone.classList.toggle("is-disabled", !admin);
+    zone.setAttribute("aria-disabled", String(!admin));
+    input.disabled = !admin;
   });
 };
 

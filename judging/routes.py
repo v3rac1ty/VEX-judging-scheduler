@@ -2,6 +2,10 @@
 
 Every committed mutation reaches `GET /api/events` subscribers through the
 stores' commit listeners (wired in main.create_app), not from here.
+
+Routes declared with `dependencies=ADMIN_ONLY` need an admin session (auth.py); the
+dependency runs before the body is validated or anything is changed. Reads, the live
+stream and the per-team check-in actions stay open to every device.
 """
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 from . import services
+from .auth import require_admin
 from .draft import DraftStore
 from .live import LiveHub
 from .models import (
@@ -28,6 +33,8 @@ from .settings import Settings
 from .store import StateStore, StateView
 
 router = APIRouter()
+
+ADMIN_ONLY = [Depends(require_admin)]
 
 
 @dataclass(frozen=True)
@@ -62,7 +69,7 @@ def get_draft(ctx: AppContext = Depends(get_context)) -> DraftDict:
     return ctx.draft.view()
 
 
-@router.patch("/api/draft", response_model=None)
+@router.patch("/api/draft", response_model=None, dependencies=ADMIN_ONLY)
 def patch_draft(payload: DraftPatch, ctx: AppContext = Depends(get_context)) -> DraftPatchResult:
     return ctx.draft.patch(payload)
 
@@ -76,7 +83,7 @@ async def events(ctx: AppContext = Depends(get_context)) -> StreamingResponse:
     return StreamingResponse(stream, media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
-@router.post("/api/generate", response_model=None)
+@router.post("/api/generate", response_model=None, dependencies=ADMIN_ONLY)
 def generate(payload: GenerateRequest, ctx: AppContext = Depends(get_context)) -> StateView:
     tz = ctx.settings.event_tz
     return ctx.store.update(lambda state: services.generate(state, payload, tz, ctx.rng))
@@ -101,14 +108,14 @@ def not_competing(payload: TeamRequest, ctx: AppContext = Depends(get_context)) 
     )
 
 
-@router.post("/api/active-schedule", response_model=None)
+@router.post("/api/active-schedule", response_model=None, dependencies=ADMIN_ONLY)
 def set_active_schedule(
     payload: ActiveScheduleRequest, ctx: AppContext = Depends(get_context)
 ) -> StateView:
     return ctx.store.update(lambda state: services.set_active_schedule(state, payload.schedule_id))
 
 
-@router.post("/api/snapshot-print", response_model=None)
+@router.post("/api/snapshot-print", response_model=None, dependencies=ADMIN_ONLY)
 def snapshot_print(
     payload: SnapshotRequest | None = None, ctx: AppContext = Depends(get_context)
 ) -> StateView:
@@ -116,14 +123,14 @@ def snapshot_print(
     return ctx.store.update(lambda state: services.snapshot_print(state, req.label, req.schedule_id))
 
 
-@router.post("/api/reset", response_model=None)
+@router.post("/api/reset", response_model=None, dependencies=ADMIN_ONLY)
 def reset_all(ctx: AppContext = Depends(get_context)) -> StateView:
     view = ctx.store.reset()
     ctx.draft.reset()
     return view
 
 
-@router.post("/api/generate-noshow", response_model=None)
+@router.post("/api/generate-noshow", response_model=None, dependencies=ADMIN_ONLY)
 def generate_no_show(
     payload: GenerateNoShowRequest | None = None, ctx: AppContext = Depends(get_context)
 ) -> StateView:

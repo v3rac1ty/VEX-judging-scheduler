@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -14,6 +15,9 @@ from judging.settings import Settings
 from tm_fixture import make_matches
 
 TZ = ZoneInfo("America/Chicago")
+ADMIN_PIN = "246813"
+
+MakeClient = Callable[..., TestClient]
 
 
 @pytest.fixture
@@ -47,12 +51,39 @@ def data_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def settings(data_dir: Path, tz: ZoneInfo) -> Settings:
-    return Settings(data_dir=data_dir, event_tz=tz)
+    # An explicit PIN keeps tests independent of JUDGING_ADMIN_PIN / .env on the dev machine.
+    return Settings(data_dir=data_dir, event_tz=tz, admin_pin=ADMIN_PIN)
+
+
+def sign_in(client: TestClient, pin: str = ADMIN_PIN) -> TestClient:
+    response = client.post("/api/admin/login", json={"pin": pin})
+    assert response.status_code == 200, response.text
+    return client
 
 
 @pytest.fixture
-def client(settings: Settings) -> TestClient:
-    return TestClient(create_app(settings, rng=random.Random(1234)))
+def make_client(settings: Settings) -> MakeClient:
+    """`make_client(settings=..., rng=..., admin=True)`: a client on a fresh app."""
+
+    def make(
+        app_settings: Settings | None = None, *, rng: random.Random | None = None, admin: bool = True
+    ) -> TestClient:
+        client = TestClient(create_app(app_settings or settings, rng=rng))
+        return sign_in(client, (app_settings or settings).admin_pin or ADMIN_PIN) if admin else client
+
+    return make
+
+
+@pytest.fixture
+def client(make_client: MakeClient) -> TestClient:
+    """Signed in as admin, so tests of admin-only routes work unchanged."""
+    return make_client(rng=random.Random(1234))
+
+
+@pytest.fixture
+def anon_client(client: TestClient) -> TestClient:
+    """Another device on the same app as `client`, not signed in."""
+    return TestClient(client.app)
 
 
 @pytest.fixture

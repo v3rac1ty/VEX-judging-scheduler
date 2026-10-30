@@ -68,10 +68,13 @@ def migrate_state(raw: Any) -> StateDict:
     return state  # type: ignore[return-value]
 
 
-def write_atomic(path: Path, text: str) -> None:
+def write_atomic(path: Path, text: str, *, mode: int | None = None) -> None:
+    """Write `text` to `path` via a fsynced temp file + rename; `mode` sets its permissions."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
+        if mode is not None and hasattr(os, "fchmod"):  # POSIX only; Windows ignores modes
+            os.fchmod(fd, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()

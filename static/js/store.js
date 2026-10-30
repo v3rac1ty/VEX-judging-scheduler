@@ -4,7 +4,8 @@
 //   draft       shared setup form: judge pairs, times, uploaded texts, event stats
 //               (server-owned, own `revision` counter)
 //   connection  live-sync status for the header pill (per device)
-//   ui          per-device prefs: team search + which schedule this device views
+//   ui          per-device prefs: team search, which schedule this device views, and
+//               whether this device is signed in as admin (never shared or persisted)
 //
 // Rendering is a pure function of these. Every server payload that carries
 // state or draft must go through setState / applyDraft*, which enforce the
@@ -34,7 +35,7 @@ const saveViewScheduleId = (id) => {
   }
 };
 
-let ui = { search: "", viewScheduleId: loadViewScheduleId() };
+let ui = { search: "", viewScheduleId: loadViewScheduleId(), isAdmin: false };
 let connection = { status: "connecting", clients: 0 };
 
 const ALL = ["state", "draft", "connection", "ui"];

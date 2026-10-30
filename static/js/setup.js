@@ -1,6 +1,7 @@
 // Lock state for the setup panel's generate buttons.
 import { els, setStatus } from "./dom.js";
 import { isBusy } from "./busy.js";
+import { getUi } from "./store.js";
 
 let lastLockKey = null;
 
@@ -18,12 +19,14 @@ export const applyLockState = (state) => {
     button.disabled = isLocked || isBusy(button);
   });
 
-  const key = `${locked}|${noshowLocked}`;
+  // Only admins can reset, so only they are told to.
+  const resetHint = getUi().isAdmin ? " Reset to generate again." : "";
+  const key = `${locked}|${noshowLocked}|${resetHint}`;
   if (key === lastLockKey) return;
   lastLockKey = key;
   if (locked) {
-    setStatus("Schedule locked after printing. Reset to generate again.");
+    setStatus(`Schedule locked after printing.${resetHint}`);
   } else if (noshowLocked) {
-    setStatus("No-show schedule locked after printing. Reset to generate again.");
+    setStatus(`No-show schedule locked after printing.${resetHint}`);
   }
 };
