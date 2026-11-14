@@ -4,12 +4,13 @@ import json
 import random
 from datetime import timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
 from judging.main import create_app
 from judging.models import EVENT_STATS_DEFAULTS, MAX_SCHEDULE_TEXT_BYTES
 from judging.parsing import format_clock, preview_matches
-from tm_fixture import as_log
+from tm_fixture import as_log, make_matches
 
 DEFAULT_DRAFT = {
     "revision": 0,
@@ -313,4 +314,22 @@ def test_generate_stops_at_eliminations(client, generate_payload, first_match):
     assert len(state["unassigned"]) == 24 - 18  # 18 ten-minute slots fit before 2:00
 
     late = generate_payload | {"start_time": "2:30 PM", "end_time": "3:00 PM"}
-    assert error(client.post("/api/generate", json=late)) == "Judging must start before eliminations do."
+    assert error(client.post("/api/generate", json=late)) == (
+        "Interviews must open before eliminations start (2:00 PM)."
+    )
+
+
+@pytest.mark.parametrize("days", [-6, 3])
+def test_generate_uses_the_match_schedules_date(client, generate_payload, first_match, days):
+    # A match file from another day (an old event used for practice, or exported early):
+    # typed times like "11:00 AM" mean that day, not today, so eliminations don't look past.
+    event = first_match + timedelta(days=days)
+    body = generate_payload | {
+        "match_schedule": json.dumps(make_matches(event)),
+        "start_time": "11:00 AM",
+        "end_time": "12:00 PM",
+    }
+    state = ok(client.post("/api/generate", json=body))
+    assert state["config"]["start_time"] == event.isoformat()
+    assert state["config"]["elims_start"][:10] == event.date().isoformat()
+    assert all(slot["start"][:10] == event.date().isoformat() for slot in state["slots"])

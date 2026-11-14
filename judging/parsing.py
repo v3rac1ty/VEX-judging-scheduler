@@ -298,6 +298,17 @@ def elims_start(matches: list[dict[str, Any]], tz: tzinfo) -> datetime | None:
     return datetime.fromtimestamp(seconds, tz=tz) if seconds is not None else None
 
 
+def event_day(matches: list[dict[str, Any]], tz: tzinfo) -> date | None:
+    """The event's date: that of the first qualification match (else of any match).
+
+    Judging times typed as "9:00 AM" are on this day, not on today's date, so a match
+    file exported days ahead (or an old one used for practice) still lines up.
+    """
+    quals, _, every = _round_times(matches)
+    times = quals or every
+    return datetime.fromtimestamp(min(times), tz=tz).date() if times else None
+
+
 def preview_matches(raw_text: str, tz: tzinfo) -> MatchPreview | None:
     """Summary of an uploaded schedule for the setup form; None when the text is blank.
 

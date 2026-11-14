@@ -22,7 +22,9 @@ from .models import (
 from .parsing import (
     TeamMatches,
     elims_start,
+    event_day,
     extract_team_matches,
+    format_clock,
     normalize_match_entries,
     parse_matches,
     parse_time,
@@ -161,9 +163,31 @@ def generate(
 ) -> None:
     if state.get("locked"):
         raise _bad_request("Schedule is locked after printing.")
+
+    team_matches: TeamMatches
+    elims: datetime | None = None
+    if req.match_schedule.strip():
+        try:
+            matches = parse_matches(req.match_schedule)
+        except ValueError as exc:
+            raise _bad_request(str(exc)) from exc
+        team_matches = extract_team_matches(matches, tz)
+        elims = elims_start(matches, tz)
+        day = today or event_day(matches, tz)
+    else:
+        existing = state.get("team_matches") or {}
+        if not existing:
+            raise _bad_request("Upload match schedule before generating.")
+        team_matches = {team: normalize_match_entries(v) for team, v in existing.items()}
+        stored = (state.get("config") or {}).get("elims_start")
+        elims = datetime.fromisoformat(stored) if stored else None
+        previous_start = (state.get("config") or {}).get("start_time")
+        day = today or (datetime.fromisoformat(previous_start).date() if previous_start else None)
+
+    # Typed times ("10:05 AM") fall on the event's day (see event_day), not on today's date.
     try:
-        start_time = parse_time(req.start_time, "judging start time", tz, today)
-        end_time = parse_time(req.end_time, "judging end time", tz, today)
+        start_time = parse_time(req.start_time, "judging start time", tz, day)
+        end_time = parse_time(req.end_time, "judging end time", tz, day)
     except ValueError as exc:
         raise _bad_request(str(exc)) from exc
 
@@ -184,27 +208,12 @@ def generate(
             raise _bad_request("Lunch must end after it starts.")
     breaks = [lunch] if lunch and not req.judge_during_lunch else []
 
-    team_matches: TeamMatches
-    elims: datetime | None = None
-    if req.match_schedule.strip():
-        try:
-            matches = parse_matches(req.match_schedule)
-        except ValueError as exc:
-            raise _bad_request(str(exc)) from exc
-        team_matches = extract_team_matches(matches, tz)
-        elims = elims_start(matches, tz)
-    else:
-        existing = state.get("team_matches") or {}
-        if not existing:
-            raise _bad_request("Upload match schedule before generating.")
-        team_matches = {team: normalize_match_entries(v) for team, v in existing.items()}
-        stored = (state.get("config") or {}).get("elims_start")
-        elims = datetime.fromisoformat(stored) if stored else None
-
     # No interviews once eliminations start: the window closes then at the latest.
     if elims is not None and end_time > elims:
         if elims <= start_time:
-            raise _bad_request("Judging must start before eliminations do.")
+            raise _bad_request(
+                f"Interviews must open before eliminations start ({format_clock(elims.astimezone(tz))})."
+            )
         end_time = elims
         duration_minutes = int((end_time - start_time).total_seconds() / 60)
 

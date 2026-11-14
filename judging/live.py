@@ -250,7 +250,7 @@ class LiveHub:
                     client.wake.clear()
                     try:
                         await asyncio.wait_for(client.wake.wait(), timeout=self.ping_seconds)
-                    except TimeoutError:
+                    except asyncio.TimeoutError:  # not the builtin TimeoutError before Python 3.11
                         yield PING
                         continue
                 if client.closed:

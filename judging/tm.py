@@ -655,7 +655,7 @@ class TMService:
                 if delay is None or delay > 0:
                     try:
                         await asyncio.wait_for(wake.wait(), timeout=delay)
-                    except TimeoutError:
+                    except asyncio.TimeoutError:  # not the builtin TimeoutError before Python 3.11
                         pass
                     wake.clear()
                     continue
