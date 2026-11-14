@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from collections.abc import Callable
 from datetime import datetime
@@ -14,9 +15,13 @@ from judging.main import create_app
 from judging.settings import Settings
 from tm_fixture import make_matches
 
+# Settings() built anywhere in the tests (even from the environment) must not reach GitHub.
+os.environ["JUDGING_UPDATE_CHECK"] = "off"
+
 TZ = ZoneInfo("America/Chicago")
 ADMIN_PIN = "246813"
 NO_TM = {"tm_url": None, "tm_client_id": None, "tm_client_secret": None, "tm_api_key": None}
+OFFLINE = {**NO_TM, "update_check": False}  # never ask GitHub for releases in tests
 
 MakeClient = Callable[..., TestClient]
 
@@ -53,7 +58,7 @@ def data_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def settings(data_dir: Path, tz: ZoneInfo) -> Settings:
     # An explicit PIN and no TM keep tests independent of JUDGING_* / .env on the dev machine.
-    return Settings(data_dir=data_dir, event_tz=tz, admin_pin=ADMIN_PIN, **NO_TM)
+    return Settings(data_dir=data_dir, event_tz=tz, admin_pin=ADMIN_PIN, **OFFLINE)
 
 
 def sign_in(client: TestClient, pin: str = ADMIN_PIN) -> TestClient:

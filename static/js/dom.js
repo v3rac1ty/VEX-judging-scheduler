@@ -28,6 +28,10 @@ export const els = {
   checkinCount: $("checkinCount"),
   announceDot: $("announceDot"),
   reminderBanner: $("reminderBanner"),
+  updateBanner: $("updateBanner"),
+  updateText: $("updateText"),
+  updateLink: $("updateLink"),
+  updateDismiss: $("updateDismiss"),
 
   // Check-in
   checkinProgress: $("checkinProgress"),

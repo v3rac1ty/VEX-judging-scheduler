@@ -23,6 +23,7 @@ from .services import ServiceError
 from .settings import Settings
 from .store import StateStore
 from .tm import TMError, TMService, TMSource
+from .updates import UpdateChecker
 
 _VALUE_ERROR_PREFIX = "Value error, "
 
@@ -89,6 +90,7 @@ def create_app(
     store = StateStore(settings)
     draft = DraftStore(settings)
     tm = TMService(settings, draft, store, source=tm_source)
+    updates = UpdateChecker(enabled=settings.update_check)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -100,6 +102,7 @@ def create_app(
             logger.info(tm.startup_line())
         hub.attach(asyncio.get_running_loop())
         tm.open()
+        updates.start()
         poller = asyncio.create_task(tm.run_poller(), name="tm-poller") if tm.configured else None
         try:
             yield
@@ -118,6 +121,7 @@ def create_app(
     app.state.hub = hub
     app.state.auth = auth
     app.state.tm = tm
+    app.state.updates = updates
     app.state.rng = rng
     store.add_listener(hub.publish_state)
     store.add_listener(tm.on_state)  # printing a schedule stops its TM auto-update

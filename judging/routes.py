@@ -34,6 +34,7 @@ from .models import (
 from .settings import Settings
 from .store import StateStore, StateView
 from .tm import TMFetchResult, TMPollResult, TMService, TMStatus, run_in_daemon_thread
+from .updates import VersionInfo
 
 router = APIRouter()
 
@@ -66,6 +67,12 @@ def get_context(request: Request) -> AppContext:
 def index(ctx: AppContext = Depends(get_context)) -> FileResponse:
     # Re-checked on every load so an update reaches every device (see RevalidatedStaticFiles).
     return FileResponse(ctx.settings.static_dir / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@router.get("/api/version", response_model=None)
+def version(request: Request) -> VersionInfo:
+    """This version and, once the startup check finishes, any newer GitHub release."""
+    return request.app.state.updates.info()
 
 
 @router.get("/api/state", response_model=None)

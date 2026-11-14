@@ -7,6 +7,7 @@ import { initUploads, renderUploads, renderUploadAccess } from "./uploads.js";
 import { initAdmin, renderAdmin } from "./admin.js";
 import { initTm, renderTm } from "./tm.js";
 import { startLive } from "./live.js";
+import { initUpdateNotice } from "./update.js";
 import { renderSchedule } from "./render/schedule.js";
 import { renderScheduleSelect } from "./render/scheduleSelect.js";
 import { renderPrint } from "./render/print.js";
@@ -54,6 +55,7 @@ initNoShowToggleTracking();
 initAdmin();
 initTm();
 initAnnounce(getState);
+initUpdateNotice();
 
 els.generateBtn.addEventListener("click", generateSchedule);
 els.printBtn.addEventListener("click", printSchedule);

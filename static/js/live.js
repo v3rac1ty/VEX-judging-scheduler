@@ -3,6 +3,7 @@
 // re-sends the full state and draft, so no extra fetch is needed.
 import { setState, applyDraftFull, applyDraftPatch, setConnection, setTm } from "./store.js";
 import { refreshAdminStatus } from "./admin.js";
+import { refreshUpdateNotice } from "./update.js";
 
 const RECONNECT_MS = 2000;
 
@@ -24,8 +25,11 @@ export const startLive = () => {
 
     source.onopen = () => {
       setConnection({ status: "live" });
-      // The server may have restarted (or the PIN changed) while we were away.
-      if (connectedBefore) refreshAdminStatus();
+      // The server may have restarted (PIN changed, or a new version) while we were away.
+      if (connectedBefore) {
+        refreshAdminStatus();
+        refreshUpdateNotice();
+      }
       connectedBefore = true;
     };
 

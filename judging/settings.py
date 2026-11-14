@@ -23,6 +23,8 @@ client secret and API key are all set; otherwise schedules come from file upload
     JUDGING_TM_POLL_SECONDS   Auto-update interval, at least 60 (default 60, TM's etiquette).
     JUDGING_TM_AUTH_URL       Token endpoint (default: DWAB's); override for mocks only.
 
+    JUDGING_UPDATE_CHECK      "off" stops the startup check for a newer GitHub release (updates.py).
+
 Values may also come from `<repo>/.env` (KEY=VALUE lines, see .env.example); a variable that
 is already set in the real environment wins over the file.
 """
@@ -171,6 +173,10 @@ def resolve_data_dir() -> Path:
     return Path(raw).expanduser().resolve() if raw else DATA_DIR
 
 
+def resolve_update_check() -> bool:
+    return os.environ.get("JUDGING_UPDATE_CHECK", "").strip().lower() not in ("off", "0", "false", "no")
+
+
 def is_valid_admin_pin(pin: str) -> bool:
     # ASCII digits only: str.isdigit() would also accept characters like "²" and "٣".
     return (
@@ -295,6 +301,8 @@ class Settings:
     tm_division: int = field(default_factory=resolve_tm_division)
     tm_poll_seconds: int = field(default_factory=resolve_tm_poll_seconds)
     tm_auth_url: str = field(default_factory=resolve_tm_auth_url)
+    # Look for a newer GitHub release at startup. Tests pass False (no network).
+    update_check: bool = field(default_factory=resolve_update_check)
 
     def __post_init__(self) -> None:
         if self.admin_pin is not None and not is_valid_admin_pin(self.admin_pin):

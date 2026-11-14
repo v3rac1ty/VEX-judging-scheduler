@@ -16,6 +16,7 @@ from .auth import AdminAuth
 from .live import LiveHub
 from .main import app
 from .tm import TMService
+from .updates import UpdateChecker
 
 GRACEFUL_SHUTDOWN_SECONDS = 2
 
@@ -110,6 +111,8 @@ def main() -> None:
     auth.log_on_startup = False  # the banner shows the PIN line instead
     tm: TMService = app.state.tm
     tm.log_on_startup = False  # ... and the Tournament Manager line
+    updates: UpdateChecker = app.state.updates
+    updates.print_notice = True  # a newer release is printed like the banner, not logged
     server = LanServer(config, app.state.hub, auth, tm)
     try:
         server.run()

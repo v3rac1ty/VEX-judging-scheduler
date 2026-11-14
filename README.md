@@ -2,7 +2,7 @@
 Suggests judging interview times for VEX teams, tracks check-in, and tells the emcee who still needs an interview.
 
 ## Windows: just double-click (no setup)
-1. Download `VEX-Judging-Scheduler.exe` from the [latest release](https://github.com/v3rac1ty/VEX-judging-scheduler/releases/latest).
+1. Download `VEX-Judging-Scheduler.exe` from the newest release on the [Releases page](https://github.com/v3rac1ty/VEX-judging-scheduler/releases).
 2. Make a new folder for it (for example `Documents\Judging`) and move the `.exe` there.
    Your event data is saved in a `data` folder next to it.
 3. Double-click the `.exe`. A window opens with the web address and the admin PIN, and your
@@ -15,9 +15,28 @@ Suggests judging interview times for VEX teams, tracks check-in, and tells the e
 
 Keep the window open while you use the app. Closing it stops the server.
 
+### Updating
+When the computer is online, the app checks GitHub for a newer release each time it starts.
+If there is one, the server window says so and signed-in admins see a notice at the top of the
+page with a **Download** link. Nothing is installed automatically. To update:
+1. Close the server window.
+2. Download the new `VEX-Judging-Scheduler.exe` and replace the old one in the same folder.
+3. Double-click it again.
+
+The `data` folder and `.env` stay as they are, so the admin PIN and event progress carry over.
+Offline, the check is skipped. To turn it off, add `JUDGING_UPDATE_CHECK=off` to `.env`.
+
 ### Building the .exe yourself
 Needs Python 3.10 or newer. In the project folder, double-click `build_exe.bat` (or run it from a
 terminal). The result is `dist\VEX-Judging-Scheduler.exe`.
+
+### Publishing a release
+1. Set `__version__` in `judging/__init__.py` to the new version, for example `"0.5"`, and commit.
+2. Build the `.exe` (above).
+3. Create a GitHub release whose tag matches, for example `v0.5`, and attach the `.exe`.
+
+The update notice compares `__version__` with the release tags, so a copy only offers a
+newer version when the tag's number is higher than its own. Pre-releases count; drafts don't.
 
 ## Quick start (from source)
 1. Install dependencies:
