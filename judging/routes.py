@@ -64,7 +64,8 @@ def get_context(request: Request) -> AppContext:
 
 @router.get("/", include_in_schema=False)
 def index(ctx: AppContext = Depends(get_context)) -> FileResponse:
-    return FileResponse(ctx.settings.static_dir / "index.html")
+    # Re-checked on every load so an update reaches every device (see RevalidatedStaticFiles).
+    return FileResponse(ctx.settings.static_dir / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @router.get("/api/state", response_model=None)

@@ -122,7 +122,7 @@ export const renderAdmin = (_state, ui) => {
 
   const { adminBtn, adminBtnLabel } = els;
   if (adminBtn && adminBtnLabel) {
-    const label = admin ? "Admin · Sign out" : "Admin sign-in";
+    const label = admin ? "Sign out of admin" : "Admin sign-in";
     if (adminBtnLabel.textContent !== label) adminBtnLabel.textContent = label;
     adminBtn.dataset.admin = String(admin);
     if (admin) adminBtn.removeAttribute("aria-haspopup");

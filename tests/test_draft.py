@@ -18,6 +18,9 @@ DEFAULT_DRAFT = {
     "block_minutes": "8",
     "start_time": "",
     "end_time": "",
+    "lunch_start": "",
+    "lunch_end": "",
+    "judge_during_lunch": "false",
     "event_stats": EVENT_STATS_DEFAULTS,
     "match_schedule": {"text": "", "name": None},
     "final_schedule": {"text": "", "name": None},
@@ -58,6 +61,10 @@ def test_preview_matches(matches, first_match, tz):
         "match_count": len(matches),
         "team_count": 24,
         "first_match": first_match.isoformat(),
+        "lunch_start": None,
+        "lunch_end": None,
+        # 36 quals every 5 min from 11:00: the last starts 1:55, so quals end at 2:00.
+        "elims_start": (first_match + timedelta(minutes=180)).isoformat(),
         "error": None,
     }
     bad = preview_matches("garbage", tz)
@@ -137,21 +144,29 @@ def test_upload_derives_preview_and_times(client, match_text, matches, first_mat
     assert result["revision"] == 1
     assert result["changes"] == {
         "match_schedule": {"text": match_text, "name": "initial.json"},
-        "preview": {"match_count": len(matches), "team_count": 24, "first_match": first_match.isoformat(), "error": None},
-        # 24 teams / 4 pairs = 6 slots x 10 min before the 11:00 first match.
-        "end_time": "11:00 AM",
-        "start_time": "10:00 AM",
+        "preview": {
+            "match_count": len(matches),
+            "team_count": 24,
+            "first_match": first_match.isoformat(),
+            "lunch_start": None,
+            "lunch_end": None,
+            "elims_start": (first_match + timedelta(minutes=180)).isoformat(),
+            "error": None,
+        },
+        # Interviews open at the 11:00 first qual: 24 teams / 4 pairs = 6 slots x 10 min.
+        "start_time": "11:00 AM",
+        "end_time": "12:00 PM",
     }
-    assert ok(client.get("/api/draft"))["start_time"] == "10:00 AM"
+    assert ok(client.get("/api/draft"))["start_time"] == "11:00 AM"
 
-    # Judge pairs / slot length changes recompute the start (end is unchanged so not resent).
-    assert patch(client, {"judge_pairs": "3"})["changes"] == {"judge_pairs": "3", "start_time": "9:40 AM"}
-    assert patch(client, {"slot_minutes": "7"})["changes"] == {"slot_minutes": "7", "start_time": "10:04 AM"}
+    # Judge pairs / slot length changes recompute the end (start is unchanged so not resent).
+    assert patch(client, {"judge_pairs": "3"})["changes"] == {"judge_pairs": "3", "end_time": "12:20 PM"}
+    assert patch(client, {"slot_minutes": "7"})["changes"] == {"slot_minutes": "7", "end_time": "11:56 AM"}
     # An unusable value leaves the times alone.
     assert patch(client, {"judge_pairs": ""})["changes"] == {"judge_pairs": ""}
     assert patch(client, {"judge_pairs": "abc"})["changes"] == {"judge_pairs": "abc"}
     # A knob change in the same patch as a typed time: the derived time wins (6 x 7 min).
-    assert patch(client, {"judge_pairs": "4", "start_time": "8:00 AM"})["changes"] == {"judge_pairs": "4", "start_time": "10:18 AM"}
+    assert patch(client, {"judge_pairs": "4", "start_time": "8:00 AM"})["changes"] == {"judge_pairs": "4", "end_time": "11:42 AM"}
     # Other fields don't trigger autofill.
     assert patch(client, {"block_minutes": "5", "start_time": "8:30 AM"})["changes"] == {"block_minutes": "5", "start_time": "8:30 AM"}
 
@@ -170,7 +185,7 @@ def test_bad_upload_sets_error_and_keeps_times(client, match_text):
     assert changes["preview"]["error"] == "Could not find JSON array in match schedule input."
     assert patch(client, {"judge_pairs": "2"})["changes"] == {"judge_pairs": "2"}  # no valid preview
     draft = ok(client.get("/api/draft"))
-    assert (draft["start_time"], draft["end_time"]) == ("10:00 AM", "11:00 AM")
+    assert (draft["start_time"], draft["end_time"]) == ("11:00 AM", "12:00 PM")
     # Clearing the upload clears the preview.
     changes = patch(client, {"match_schedule": None})["changes"]
     assert changes == {"match_schedule": {"text": "", "name": None}, "preview": None}
@@ -181,7 +196,7 @@ def test_upload_without_teams_uses_default_window(client, matches):
         match["matchInfo"]["alliances"] = []
     changes = patch(client, {"match_schedule": {"text": json.dumps(matches)}})["changes"]
     assert changes["preview"]["team_count"] == 0
-    assert (changes["start_time"], changes["end_time"]) == ("9:20 AM", "11:00 AM")
+    assert (changes["start_time"], changes["end_time"]) == ("11:00 AM", "12:40 PM")
 
 
 def test_final_schedule_preview_has_no_autofill(client, match_text):
@@ -210,3 +225,92 @@ def test_draft_survives_restart_and_corrupt_file(settings, make_client, data_dir
     (data_dir / "draft.json").write_text("{nope")
     assert ok(TestClient(create_app(settings)).get("/api/draft")) == DEFAULT_DRAFT
     assert list(data_dir.glob("draft.corrupt-*.json"))
+
+
+# ------------------------------------------------------------------------- lunch
+
+
+def with_lunch(matches, after_match: int, minutes: int):
+    """Shift every match after the `after_match`-th by `minutes` (a lunch break)."""
+    for index, match in enumerate(matches):
+        if index >= after_match:
+            match["matchInfo"]["timeScheduled"] += minutes * 60
+    return matches
+
+
+def test_preview_detects_lunch(matches, first_match, tz):
+    # Matches every 5 min from 11:00; a 60-minute pause after the 12th (11:55 AM).
+    preview = preview_matches(json.dumps(with_lunch(matches, 12, 60)), tz)
+    assert preview["lunch_start"] == (first_match + timedelta(minutes=60)).isoformat()  # 11:55 + one cycle
+    assert preview["lunch_end"] == (first_match + timedelta(minutes=120)).isoformat()  # 12:00 + 60
+    # Ordinary spacing is not lunch.
+    assert preview_matches(json.dumps(matches[:12]), tz)["lunch_start"] is None
+
+
+def test_lunch_is_skipped_by_default_and_toggle_includes_it(client, matches):
+    text = json.dumps(with_lunch(matches, 3, 60))  # pause after 11:10 -> lunch 11:15-12:15
+    changes = patch(client, {"match_schedule": {"text": text}})["changes"]
+    assert (changes["lunch_start"], changes["lunch_end"]) == ("11:15 AM", "12:15 PM")
+    # 6 interviews per pair from 11:00: one before lunch (11:10 would run into it), five after.
+    assert (changes["start_time"], changes["end_time"]) == ("11:00 AM", "1:05 PM")
+
+    # Judging through lunch: the window shrinks back to 6 x 10 min.
+    assert patch(client, {"judge_during_lunch": True})["changes"] == {"judge_during_lunch": "true", "end_time": "12:00 PM"}
+    assert patch(client, {"judge_during_lunch": "false"})["changes"] == {"judge_during_lunch": "false", "end_time": "1:05 PM"}
+    # Editing the lunch window moves the end too.
+    assert patch(client, {"lunch_end": "12:45 PM"})["changes"] == {"lunch_end": "12:45 PM", "end_time": "1:35 PM"}
+
+
+def test_generate_skips_lunch_unless_judging_through_it(client, generate_payload):
+    def generate(body):
+        state = ok(client.post("/api/generate", json=generate_payload | body))
+        return {slot["start"][11:16] for slot in state["slots"]}, state["config"]
+
+    lunch = {"lunch_start": "9:30 AM", "lunch_end": "10:00 AM"}
+    starts, config = generate(lunch)
+    assert not any("09:30" <= start < "10:00" for start in starts)
+    assert {"09:20", "10:00"} <= starts
+    assert config["judge_during_lunch"] is False
+    assert config["lunch_start"][11:16] == "09:30" and config["lunch_end"][11:16] == "10:00"
+
+    starts, config = generate(lunch | {"judge_during_lunch": "true"})
+    assert "09:30" in starts and config["judge_during_lunch"] is True
+
+    bad = generate_payload | {"lunch_start": "noon", "lunch_end": "1:00 PM"}
+    assert error(client.post("/api/generate", json=bad)) == "Lunch start must be like 9:00 AM."
+    backwards = generate_payload | {"lunch_start": "1:00 PM", "lunch_end": "12:00 PM"}
+    assert error(client.post("/api/generate", json=backwards)) == "Lunch must end after it starts."
+
+
+# ------------------------------------------------------------------ eliminations
+
+
+def add_elim(matches, at):
+    elim = json.loads(json.dumps(matches[0]))
+    elim["matchInfo"]["matchTuple"] = {"round": "QF", "match": 1}
+    elim["matchInfo"]["timeScheduled"] = int(at.timestamp())
+    return matches + [elim]
+
+
+def test_preview_uses_first_elimination_match(matches, first_match, tz):
+    at = first_match + timedelta(hours=4)
+    assert preview_matches(json.dumps(add_elim(matches, at)), tz)["elims_start"] == at.isoformat()
+
+
+def test_autofill_never_runs_into_eliminations(client, matches, first_match):
+    # Quals end at 2:00 PM. One judge pair needs 24 x 10 min = 4 hours from 11:00.
+    changes = patch(client, {"match_schedule": {"text": json.dumps(matches)}, "judge_pairs": "1"})["changes"]
+    assert (changes["start_time"], changes["end_time"]) == ("11:00 AM", "2:00 PM")
+
+
+def test_generate_stops_at_eliminations(client, generate_payload, first_match):
+    # Typed window runs to 3:00 PM, but quals (and so interviews) end at 2:00 PM.
+    body = generate_payload | {"judge_pairs": "1", "start_time": "11:00 AM", "end_time": "3:00 PM"}
+    state = ok(client.post("/api/generate", json=body))
+    assert state["config"]["end_time"][11:16] == "14:00"
+    assert state["config"]["elims_start"][11:16] == "14:00"
+    assert max(slot["end"] for slot in state["slots"] if slot["team"])[11:16] <= "14:00"
+    assert len(state["unassigned"]) == 24 - 18  # 18 ten-minute slots fit before 2:00
+
+    late = generate_payload | {"start_time": "2:30 PM", "end_time": "3:00 PM"}
+    assert error(client.post("/api/generate", json=late)) == "Judging must start before eliminations do."

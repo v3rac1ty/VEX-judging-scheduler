@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
 
 from .parsing import MatchPreview
 
@@ -61,6 +61,11 @@ class ConfigDict(TypedDict, total=False):
     block_minutes: int
     start_time: str
     end_time: str
+    # Lunch window (ISO 8601) and whether interviews are suggested during it.
+    lunch_start: str | None
+    lunch_end: str | None
+    judge_during_lunch: bool
+    elims_start: str | None  # interviews end by then (first elim, or end of quals)
     event_stats: dict[str, Any]
 
 
@@ -119,14 +124,32 @@ def _text(value: Any) -> str:
     return str(value)
 
 
+TRUE_TEXTS = frozenset({"true", "1", "yes", "on"})
+
+
+def truthy(value: Any) -> bool:
+    """Checkbox values arrive as booleans or as the draft's "true"/"false" text."""
+    if isinstance(value, bool):
+        return value
+    return _text(value).strip().lower() in TRUE_TEXTS
+
+
 class GenerateRequest(BaseModel):
     judge_pairs: int = 4
     slot_minutes: int = 10
     block_minutes: int = 8
     start_time: str = ""
     end_time: str = ""
+    lunch_start: str = ""
+    lunch_end: str = ""
+    judge_during_lunch: bool = False
     match_schedule: str = ""
     event_stats: dict[str, Any] | None = None
+
+    @field_validator("judge_during_lunch", mode="before")
+    @classmethod
+    def _judge_during_lunch(cls, value: Any) -> bool:
+        return truthy(value)
 
     @field_validator("judge_pairs", mode="before")
     @classmethod
@@ -143,7 +166,7 @@ class GenerateRequest(BaseModel):
     def _block_minutes(cls, value: Any) -> Any:
         return 8 if value is None else _whole_number(value, "Block minutes", 0)
 
-    @field_validator("start_time", "end_time", "match_schedule", mode="before")
+    @field_validator("start_time", "end_time", "lunch_start", "lunch_end", "match_schedule", mode="before")
     @classmethod
     def _strings(cls, value: Any) -> str:
         return _text(value)
@@ -268,13 +291,26 @@ EVENT_STATS_DEFAULTS: dict[str, int] = {
     "distinct_avg": 23,
 }
 
-DRAFT_TEXT_FIELDS = ("judge_pairs", "slot_minutes", "block_minutes", "start_time", "end_time")
+DRAFT_TEXT_FIELDS = (
+    "judge_pairs",
+    "slot_minutes",
+    "block_minutes",
+    "start_time",
+    "end_time",
+    "lunch_start",
+    "lunch_end",
+    "judge_during_lunch",
+)
 DRAFT_TEXT_DEFAULTS: dict[str, str] = {
     "judge_pairs": "4",
     "slot_minutes": "10",
     "block_minutes": "8",
     "start_time": "",
     "end_time": "",
+    "lunch_start": "",
+    "lunch_end": "",
+    # Checkbox, kept as text like every other setup field. Default: no interviews at lunch.
+    "judge_during_lunch": "false",
 }
 # Upload field -> its server-derived preview field.
 DRAFT_SCHEDULE_FIELDS = {"match_schedule": "preview", "final_schedule": "final_preview"}
@@ -294,6 +330,9 @@ class DraftDict(TypedDict):
     block_minutes: str
     start_time: str
     end_time: str
+    lunch_start: str
+    lunch_end: str
+    judge_during_lunch: str
     event_stats: dict[str, StatValue]
     match_schedule: ScheduleTextDict
     final_schedule: ScheduleTextDict
@@ -361,13 +400,18 @@ class DraftPatch(BaseModel):
     block_minutes: str = ""
     start_time: str = ""
     end_time: str = ""
+    lunch_start: str = ""
+    lunch_end: str = ""
+    judge_during_lunch: str = ""
     event_stats: dict[str, StatValue] = {}
     match_schedule: ScheduleTextPatch | None = None
     final_schedule: ScheduleTextPatch | None = None
 
     @field_validator(*DRAFT_TEXT_FIELDS, mode="before")
     @classmethod
-    def _setup_text(cls, value: Any) -> str:
+    def _setup_text(cls, value: Any, info: ValidationInfo) -> str:
+        if info.field_name == "judge_during_lunch" and isinstance(value, bool):
+            return "true" if value else "false"  # the lunch checkbox may send a real boolean
         return _field_text(value)
 
     @field_validator("event_stats", mode="before")

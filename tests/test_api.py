@@ -233,3 +233,9 @@ def test_failed_mutation_leaves_state_untouched(client, generate_payload):
     before = ok(client.get("/api/state"))
     error(client.post("/api/generate-noshow", json={"match_schedule": "garbage", "event_stats": {"x": 1}}))
     assert ok(client.get("/api/state")) == before
+
+
+def test_page_and_static_files_are_revalidated(client):
+    # Browsers must re-check after an update instead of running cached old scripts.
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    assert client.get("/static/js/main.js").headers["cache-control"] == "no-cache"

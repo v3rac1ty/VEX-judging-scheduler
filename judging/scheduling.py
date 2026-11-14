@@ -47,29 +47,65 @@ def snap_to_five(value: datetime) -> datetime:
     return floored + timedelta(minutes=minutes_to_add)
 
 
+def skip_breaks(cursor: datetime, slot_delta: timedelta, breaks: Iterable[Interval]) -> datetime:
+    """Earliest start >= `cursor` whose [start, start+slot) overlaps no break."""
+    ordered = sorted(breaks)
+    moved = True
+    while moved:
+        moved = False
+        for break_start, break_end in ordered:
+            if cursor < break_end and cursor + slot_delta > break_start:
+                cursor = break_end
+                moved = True
+    return cursor
+
+
+def window_end_for(
+    start_time: datetime, slot_count: int, slot_minutes: int, breaks: Iterable[Interval] = ()
+) -> datetime:
+    """When `slot_count` back-to-back slots from the snapped start finish, skipping breaks.
+
+    Mirrors `build_slots`, so a window ending here fits exactly `slot_count` slots per judge.
+    """
+    slot_delta = timedelta(minutes=slot_minutes)
+    breaks = list(breaks)
+    cursor = snap_to_five(start_time)
+    for _ in range(max(0, slot_count)):
+        cursor = skip_breaks(cursor, slot_delta, breaks) + slot_delta
+    return cursor
+
+
 def build_slots(
     judge_pairs: int,
     start_time: datetime,
     end_time: datetime,
     slot_minutes: int,
+    breaks: Iterable[Interval] = (),
 ) -> list[Slot]:
     """Back-to-back slots per judge from the snapped start; last one ends <= end_time.
 
     Only the first start is snapped to 5 minutes; later slots follow directly so
-    slot lengths that are not multiples of 5 never overlap.
+    slot lengths that are not multiples of 5 never overlap. A slot that would
+    overlap a break (lunch) moves to the end of that break.
     """
     if judge_pairs < 1 or slot_minutes < 1:
         raise ValueError("judge_pairs and slot_minutes must be positive.")
     first_start = snap_to_five(start_time)
     slot_delta = timedelta(minutes=slot_minutes)
-    available = end_time - first_start
-    total_slots_per_judge = max(0, available // slot_delta) if available > timedelta(0) else 0
-    slots: list[Slot] = []
-    for judge_id in range(1, judge_pairs + 1):
-        for i in range(total_slots_per_judge):
-            slot_start = first_start + i * slot_delta
-            slots.append(Slot(judge_id=judge_id, start=slot_start, end=slot_start + slot_delta))
-    return slots
+    breaks = list(breaks)
+    starts: list[datetime] = []
+    cursor = first_start
+    while True:
+        cursor = skip_breaks(cursor, slot_delta, breaks)
+        if cursor + slot_delta > end_time:
+            break
+        starts.append(cursor)
+        cursor += slot_delta
+    return [
+        Slot(judge_id=judge_id, start=slot_start, end=slot_start + slot_delta)
+        for judge_id in range(1, judge_pairs + 1)
+        for slot_start in starts
+    ]
 
 
 def assign_slots_balanced_random(
@@ -219,11 +255,13 @@ def place_no_shows(
     slot_minutes: int,
     block_minutes: int,
     rng: random.Random | None = None,
+    breaks: Iterable[Interval] = (),
 ) -> tuple[list[SlotDict], dict[str, int]]:
     """Place each suggested team into the earliest free slot inside one of its gaps.
 
     Judges are kept roughly balanced; if no under-target judge fits, any judge may
-    take the team. Returns (no-show slots, team -> judge_id).
+    take the team. `breaks` (lunch) block every judge. Returns (no-show slots,
+    team -> judge_id).
     """
     rng = rng or _DEFAULT_RNG
     teams = [s["team"] for s in suggestions if s.get("team")]
@@ -234,6 +272,11 @@ def place_no_shows(
     existing_by_judge = collect_judge_intervals(base_slots)
 
     judge_ids = list(range(1, judge_pairs + 1))
+    for break_interval in breaks:
+        for jid in judge_ids:
+            existing_by_judge.setdefault(jid, []).append(break_interval)
+    for intervals in existing_by_judge.values():
+        intervals.sort()
     target_per_judge = max(1, len(teams) // judge_pairs)
     remainder = len(teams) % judge_pairs
     extra_judges = set(rng.sample(judge_ids, remainder)) if remainder else set()

@@ -1,5 +1,6 @@
-// Tournament Manager (TM) source: "Fetch from TM" + "Auto-update" for the initial
-// match schedule and the final schedule.
+// Tournament Manager (TM) source: "Fetch from TM" + "Auto-update" for the match
+// schedule in Setup. (There is no final-schedule upload: interviews are over by the
+// time eliminations are scheduled, so no-show recovery uses this same schedule.)
 //
 // The server owns everything: it fetches from TM, writes the text into the shared
 // draft (which reaches every device through the normal draft SSE patch, so this
@@ -12,16 +13,14 @@
 // control another rule disabled:
 //   * admin-only      the `admin-only` class (body.is-admin) hides the box for everyone else
 //   * configured      the `hidden` attribute while `tm` is unknown or not configured
-//   * lock state      initial controls disabled once state.locked, final ones once
-//                     state.noshow_locked (the server stops polling then too)
+//   * lock state      controls disabled once state.locked (the server stops polling then too)
 import { api } from "./api.js";
 import { els, setStatus } from "./dom.js";
 import { isBusy, withBusy } from "./busy.js";
 import { getState, getTm, getUi, setTm, subscribe } from "./store.js";
 
 const TARGETS = {
-  match_schedule: { lockKey: "locked", label: "initial match schedule" },
-  final_schedule: { lockKey: "noshow_locked", label: "final schedule" },
+  match_schedule: { lockKey: "locked", label: "match schedule" },
 };
 
 // Per-device, per-target feedback that is not part of the shared status:
@@ -60,10 +59,10 @@ const describe = (tm, state, target) => {
   } else {
     const clock = tm.last_fetch ? formatClock(tm.last_fetch) : "";
     if (clock) {
-      const division = tm.division != null ? ` · Division ${tm.division}` : "";
+      const division = tm.division != null ? `, Division ${tm.division}` : "";
       parts.push(`Last fetched ${clock}${division}`);
     } else if (tm.division != null) {
-      parts.push(`Division ${tm.division} · Not fetched yet`);
+      parts.push(`Division ${tm.division}, not fetched yet`);
     }
     if (note && (note.lastChange ?? null) === (tm.last_change ?? null)) parts.push(note.text);
   }
@@ -72,7 +71,7 @@ const describe = (tm, state, target) => {
   } else if (isLocked(state, target)) {
     parts.push("Locked, so TM updates are off");
   }
-  return { text: parts.join(" · "), error: false };
+  return { text: parts.join(", "), error: false };
 };
 
 /** Subscriber (state, ui, tm): visibility, disabled state, switch value, status line. */

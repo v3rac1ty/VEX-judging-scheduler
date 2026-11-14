@@ -16,6 +16,32 @@ export const els = {
   blockMinutes: $("blockMinutes"),
   startTime: $("startTime"),
   endTime: $("endTime"),
+  lunchStart: $("lunchStart"),
+  lunchEnd: $("lunchEnd"),
+  judgeDuringLunch: $("judgeDuringLunch"),
+  lunchHint: $("lunchHint"),
+  capacityHint: $("capacityHint"),
+
+  // Tabs
+  tabButtons: [...document.querySelectorAll(".tab[data-tab]")],
+  tabPanels: [...document.querySelectorAll(".tab-panel[data-tab]")],
+  checkinCount: $("checkinCount"),
+  announceDot: $("announceDot"),
+  reminderBanner: $("reminderBanner"),
+
+  // Check-in
+  checkinProgress: $("checkinProgress"),
+  checkinGate: $("checkinGate"),
+  filterButtons: [...document.querySelectorAll(".seg[data-filter]")],
+  viewButtons: [...document.querySelectorAll(".seg[data-view]")],
+  versionBox: $("versionBox"),
+
+  // Announce
+  announceCount: $("announceCount"),
+  announceTiming: $("announceTiming"),
+  announceList: $("announceList"),
+  announceScript: $("announceScript"),
+  copyAnnounce: $("copyAnnounce"),
 
   stats: {
     rounds_min: $("roundsMin"),
@@ -47,10 +73,6 @@ export const els = {
   matchPreview: $("matchPreview"),
   dropzone: $("dropzone"),
   fileInput: $("fileInput"),
-  finalDropzone: $("finalDropzone"),
-  finalFileInput: $("finalFileInput"),
-  finalMatchSchedule: $("finalMatchSchedule"),
-  finalPreview: $("finalPreview"),
 
   // Tournament Manager source controls, keyed by draft target.
   tm: {
@@ -59,12 +81,6 @@ export const els = {
       fetch: $("tmMatchFetch"),
       auto: $("tmMatchAuto"),
       status: $("tmMatchStatus"),
-    },
-    final_schedule: {
-      box: $("tmFinalBox"),
-      fetch: $("tmFinalFetch"),
-      auto: $("tmFinalAuto"),
-      status: $("tmFinalStatus"),
     },
   },
 

@@ -5,8 +5,10 @@
 //               (server-owned, own `revision` counter)
 //   connection  live-sync status for the header pill (per device)
 //   tm          Tournament Manager source status (server-owned, shared; null until known)
-//   ui          per-device prefs: team search, which schedule this device views, and
-//               whether this device is signed in as admin (never shared or persisted)
+//   ui          per-device prefs: team search, which schedule this device views, open tab,
+//               check-in filter/order, and whether this device is signed in as admin
+//               (never shared; tab/filter/order are remembered in localStorage)
+//   clock       a once-a-minute tick for time-based UI (the announcement reminder)
 //
 // Rendering is a pure function of these. Every server payload that carries
 // state or draft must go through setState / applyDraft*, which enforce the
@@ -36,11 +38,36 @@ const saveViewScheduleId = (id) => {
   }
 };
 
-let ui = { search: "", viewScheduleId: loadViewScheduleId(), isAdmin: false };
+// Tab, check-in filter and order are remembered per device across reloads.
+const PREF_KEYS = { tab: "judging.tab", filter: "judging.filter", view: "judging.view" };
+const loadPref = (name) => {
+  try {
+    return localStorage.getItem(PREF_KEYS[name]) || null;
+  } catch {
+    return null;
+  }
+};
+const savePref = (name, value) => {
+  try {
+    if (value == null) localStorage.removeItem(PREF_KEYS[name]);
+    else localStorage.setItem(PREF_KEYS[name], String(value));
+  } catch {
+    // Not remembered; still works for this page load.
+  }
+};
+
+let ui = {
+  search: "",
+  viewScheduleId: loadViewScheduleId(),
+  isAdmin: false,
+  tab: loadPref("tab"), // null: pick a sensible default (see render/tabs.js)
+  filter: loadPref("filter") || "all", // all | waiting | done
+  view: loadPref("view") || "team", // team | judge
+};
 let connection = { status: "connecting", clients: 0 };
 let tm = null;
 
-const ALL = ["state", "draft", "connection", "ui", "tm"];
+const ALL = ["state", "draft", "connection", "ui", "tm", "clock"];
 const subscribers = new Map(); // fn -> Set of slices it cares about
 
 const notify = (changed) => {
@@ -171,11 +198,17 @@ export const applyDraftPatch = (patch) => {
 
 /** Merge per-device UI preferences (search term, viewed schedule, ...). Never sent to the server. */
 export const setUi = (partial) => {
-  const previousView = ui.viewScheduleId;
+  const previous = ui;
   ui = { ...ui, ...partial };
-  if (ui.viewScheduleId !== previousView) saveViewScheduleId(ui.viewScheduleId);
+  if (ui.viewScheduleId !== previous.viewScheduleId) saveViewScheduleId(ui.viewScheduleId);
+  Object.keys(PREF_KEYS).forEach((name) => {
+    if (ui[name] !== previous[name]) savePref(name, ui[name]);
+  });
   notify(["ui"]);
 };
+
+/** Re-run time-based renders (called on a timer). */
+export const tick = () => notify(["clock"]);
 
 export const setConnection = (partial) => {
   connection = { ...connection, ...partial };

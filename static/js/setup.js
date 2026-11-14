@@ -20,13 +20,13 @@ export const applyLockState = (state) => {
   });
 
   // Only admins can reset, so only they are told to.
-  const resetHint = getUi().isAdmin ? " Reset to generate again." : "";
+  const resetHint = getUi().isAdmin ? " Use Start over to make new ones." : "";
   const key = `${locked}|${noshowLocked}|${resetHint}`;
   if (key === lastLockKey) return;
   lastLockKey = key;
   if (locked) {
-    setStatus(`Schedule locked after printing.${resetHint}`);
+    setStatus(`Suggested times are printed and locked.${resetHint}`);
   } else if (noshowLocked) {
-    setStatus(`No-show schedule locked after printing.${resetHint}`);
+    setStatus(`No-show times are printed and locked.${resetHint}`);
   }
 };

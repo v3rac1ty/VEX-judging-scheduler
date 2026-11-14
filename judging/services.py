@@ -21,6 +21,7 @@ from .models import (
 )
 from .parsing import (
     TeamMatches,
+    elims_start,
     extract_team_matches,
     normalize_match_entries,
     parse_matches,
@@ -29,6 +30,7 @@ from .parsing import (
     team_sort_key,
 )
 from .scheduling import (
+    Interval,
     assign_slots_balanced_random,
     build_no_show_suggestion,
     build_slots,
@@ -169,24 +171,48 @@ def generate(
     if duration_minutes <= 0:
         raise _bad_request("Judging end time must be after the start time.")
 
+    lunch: Interval | None = None
+    if req.lunch_start.strip() or req.lunch_end.strip():
+        try:
+            lunch = (
+                parse_time(req.lunch_start, "lunch start", tz, start_time.date()),
+                parse_time(req.lunch_end, "lunch end", tz, start_time.date()),
+            )
+        except ValueError as exc:
+            raise _bad_request(str(exc)) from exc
+        if lunch[1] <= lunch[0]:
+            raise _bad_request("Lunch must end after it starts.")
+    breaks = [lunch] if lunch and not req.judge_during_lunch else []
+
     team_matches: TeamMatches
+    elims: datetime | None = None
     if req.match_schedule.strip():
         try:
             matches = parse_matches(req.match_schedule)
         except ValueError as exc:
             raise _bad_request(str(exc)) from exc
         team_matches = extract_team_matches(matches, tz)
+        elims = elims_start(matches, tz)
     else:
         existing = state.get("team_matches") or {}
         if not existing:
             raise _bad_request("Upload match schedule before generating.")
         team_matches = {team: normalize_match_entries(v) for team, v in existing.items()}
+        stored = (state.get("config") or {}).get("elims_start")
+        elims = datetime.fromisoformat(stored) if stored else None
+
+    # No interviews once eliminations start: the window closes then at the latest.
+    if elims is not None and end_time > elims:
+        if elims <= start_time:
+            raise _bad_request("Judging must start before eliminations do.")
+        end_time = elims
+        duration_minutes = int((end_time - start_time).total_seconds() / 60)
 
     if not team_matches:
         raise _bad_request("No teams found in match schedule.")
 
     teams = sorted(team_matches, key=team_sort_key)
-    slots = build_slots(req.judge_pairs, start_time, end_time, req.slot_minutes)
+    slots = build_slots(req.judge_pairs, start_time, end_time, req.slot_minutes, breaks)
     slots, unassigned = assign_slots_balanced_random(slots, teams, req.judge_pairs, rng)
     slot_payload = [s.to_dict() for s in slots]
 
@@ -199,6 +225,10 @@ def generate(
             "block_minutes": req.block_minutes,
             "start_time": start_time.isoformat(),
             "end_time": end_time.isoformat(),
+            "lunch_start": lunch[0].isoformat() if lunch else None,
+            "lunch_end": lunch[1].isoformat() if lunch else None,
+            "judge_during_lunch": req.judge_during_lunch,
+            "elims_start": elims.isoformat() if elims else None,
             "event_stats": req.event_stats or {},
         },
         "locked": False,
@@ -374,6 +404,18 @@ def refresh_no_show_gaps_from_schedule(state: StateDict, raw_schedule: str, tz: 
         state.pop("last_suggestions", None)
 
 
+def config_breaks(config: dict[str, Any]) -> list[Interval]:
+    """The lunch window no-show interviews must avoid, from a generated schedule's config."""
+    if config.get("judge_during_lunch") or not config.get("lunch_start") or not config.get("lunch_end"):
+        return []
+    try:
+        start = datetime.fromisoformat(str(config["lunch_start"]))
+        end = datetime.fromisoformat(str(config["lunch_end"]))
+    except ValueError:
+        return []
+    return [(start, end)] if end > start else []
+
+
 def generate_no_show(
     state: StateDict,
     req: GenerateNoShowRequest,
@@ -409,6 +451,7 @@ def generate_no_show(
         slot_minutes=int(config.get("slot_minutes", 10)),
         block_minutes=int(config.get("block_minutes", 0)),
         rng=rng,
+        breaks=config_breaks(config),
     )
     if not slots:
         raise _bad_request("No gaps available for no-show teams.")

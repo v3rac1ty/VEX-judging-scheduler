@@ -4,206 +4,255 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>VEX Judging Scheduler</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!-- Non-blocking: if the event network has no internet, the page still renders with system fonts. -->
-    <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=Space+Grotesk:wght@400;500;600&display=swap"
-      rel="stylesheet"
-      media="print"
-      onload="this.media='all'"
-    />
-    <noscript>
-      <link
-        href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=Space+Grotesk:wght@400;500;600&display=swap"
-        rel="stylesheet"
-      />
-    </noscript>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <div class="bg-gradient"></div>
-    <header class="hero">
-      <div class="hero-tools">
-        <div
-          id="connPill"
-          class="conn-pill"
-          data-status="connecting"
-          role="status"
-          aria-live="polite"
-        >
-          <span class="conn-dot" aria-hidden="true"></span>
-          <span id="connLabel">Connecting…</span>
+    <div class="app">
+      <header class="hero">
+        <div class="hero-content">
+          <h1>VEX Judging Scheduler</h1>
+          <p class="subtitle">Suggested interview times, check-in and announcements</p>
         </div>
-        <button id="adminBtn" class="admin-btn" type="button" aria-haspopup="dialog">
-          <svg class="admin-btn-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
-            <path
-              fill="currentColor"
-              d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a1.5 1.5 0 0 0-1.5 1.5v6A1.5 1.5 0 0 0 4 15h8a1.5 1.5 0 0 0 1.5-1.5v-6A1.5 1.5 0 0 0 12 6h-.5V4.5A3.5 3.5 0 0 0 8 1Zm2 5H6V4.5a2 2 0 1 1 4 0V6Z"
-            />
-          </svg>
-          <span id="adminBtnLabel">Admin sign-in</span>
-        </button>
-      </div>
-      <div class="hero-content">
-        <p class="eyebrow">Inspection Period Planner</p>
-        <h1>VEX Judging Scheduler</h1>
-        <p class="subtitle">
-          Build a judging schedule around match times, track check-ins, and
-          recover from no-shows in seconds.
-        </p>
-      </div>
-    </header>
-
-    <main class="layout">
-      <section class="panel">
-        <h2>Setup</h2>
-        <p class="admin-hint non-admin-only">Setup is managed by the admin.</p>
-        <div class="grid">
-          <label>
-            Judge pairs
-            <input id="judgePairs" type="number" min="1" value="4" />
-          </label>
-          <label>
-            Slot length (min)
-            <input id="slotMinutes" type="number" min="1" value="10" />
-          </label>
-          <label>
-            Judging end time
-            <input
-              id="endTime"
-              type="text"
-              inputmode="numeric"
-              placeholder="10:40 AM"
-            />
-          </label>
-          <label>
-            Match block (min)
-            <input id="blockMinutes" type="number" min="1" value="8" />
-          </label>
-          <label>
-            Judging start time
-            <input
-              id="startTime"
-              type="text"
-              inputmode="numeric"
-              placeholder="9:00 AM"
-            />
-          </label>
-        </div>
-        <details class="event-stats-panel">
-          <summary>Event statistics</summary>
-          <div class="event-stats-grid">
-            <div class="stat-group">
-              <span class="stat-group-label">Rounds per team</span>
-              <label>Min <input id="roundsMin" type="number" min="1" value="8" /></label>
-              <label>Max <input id="roundsMax" type="number" min="1" value="8" /></label>
-            </div>
-            <div class="stat-group">
-              <span class="stat-group-label">Match spacing</span>
-              <label>Min <input id="spacingMin" type="number" min="1" value="3" /></label>
-              <label>Max <input id="spacingMax" type="number" min="1" value="14" /></label>
-              <label>Avg <input id="spacingAvg" type="number" min="1" value="7" /></label>
-            </div>
-            <div class="stat-group">
-              <span class="stat-group-label">Repeat count</span>
-              <label>Min <input id="repeatMin" type="number" min="1" value="1" /></label>
-              <label>Max <input id="repeatMax" type="number" min="1" value="2" /></label>
-              <label>Avg <input id="repeatAvg" type="number" min="1" value="1" /></label>
-            </div>
-            <div class="stat-group">
-              <span class="stat-group-label">Distinct teams seen</span>
-              <label>Min <input id="distinctMin" type="number" min="1" value="21" /></label>
-              <label>Max <input id="distinctMax" type="number" min="1" value="24" /></label>
-              <label>Avg <input id="distinctAvg" type="number" min="1" value="23" /></label>
-            </div>
+        <div class="hero-tools">
+          <div
+            id="connPill"
+            class="conn-pill"
+            data-status="connecting"
+            role="status"
+            aria-live="polite"
+          >
+            <span class="conn-dot" aria-hidden="true"></span>
+            <span id="connLabel">Connecting…</span>
           </div>
-        </details>
-        <div class="dropzone" id="dropzone" aria-disabled="true">
-          <input id="fileInput" type="file" accept=".json,.log,.txt" />
-          <div class="dropzone-content">
-            <strong>Drop a .json or .log file here</strong>
-            <span>or click to browse</span>
-          </div>
-        </div>
-        <div id="tmMatchBox" class="tm-source admin-only" data-target="match_schedule" hidden>
-          <div class="tm-controls">
-            <button id="tmMatchFetch" class="secondary tm-fetch" type="button">Fetch from TM</button>
-            <label class="tm-toggle">
-              <input id="tmMatchAuto" class="tm-switch" type="checkbox" role="switch" />
-              <span>Auto-update</span>
-            </label>
-          </div>
-          <p id="tmMatchStatus" class="tm-status" role="status" aria-live="polite"></p>
-        </div>
-        <p id="matchPreview" class="upload-preview" aria-live="polite"></p>
-        <label class="full">
-          Match schedule JSON or log
-          <textarea id="matchSchedule" rows="10" readonly></textarea>
-        </label>
-        <div class="actions admin-only">
-          <button id="generateBtn" class="primary">Generate schedule</button>
-          <button id="printBtn" class="secondary" type="button">Print schedule</button>
-          <button id="resetBtn" class="danger" type="button">Reset all</button>
-        </div>
-        <div id="status" class="status"></div>
-      </section>
-
-      <section class="panel">
-        <h2>Schedule</h2>
-        <div class="schedule-toolbar">
-          <label>
-            View schedule
-            <select id="scheduleSelect"></select>
-          </label>
-          <label class="search">
-            Search team
-            <input id="teamSearch" type="text" placeholder="Team #" />
-          </label>
-        </div>
-        <div id="schedule" class="schedule"></div>
-        <div id="printTable" class="print-table"></div>
-      </section>
-
-      <section class="panel">
-        <h2>No-show recovery</h2>
-        <div class="final-schedule">
-          <h3>Final match schedule</h3>
-          <p class="admin-hint non-admin-only">Setup is managed by the admin.</p>
-          <div class="dropzone admin-only" id="finalDropzone" aria-disabled="true">
-            <input id="finalFileInput" type="file" accept=".json,.log,.txt" />
-            <div class="dropzone-content">
-              <strong>Drop final schedule here</strong>
-              <span>or click to browse</span>
-            </div>
-          </div>
-          <div id="tmFinalBox" class="tm-source admin-only" data-target="final_schedule" hidden>
-            <div class="tm-controls">
-              <button id="tmFinalFetch" class="secondary tm-fetch" type="button">Fetch from TM</button>
-              <label class="tm-toggle">
-                <input id="tmFinalAuto" class="tm-switch" type="checkbox" role="switch" />
-                <span>Auto-update</span>
-              </label>
-            </div>
-            <p id="tmFinalStatus" class="tm-status" role="status" aria-live="polite"></p>
-          </div>
-          <p id="finalPreview" class="upload-preview" aria-live="polite"></p>
-          <label class="full">
-            Final match schedule
-            <textarea id="finalMatchSchedule" rows="6" readonly></textarea>
-          </label>
-          <p class="stat-note">Event statistics are set in the <strong>Setup</strong> panel and included automatically.</p>
-          <button id="generateNoShowBtn" class="secondary admin-only" type="button">
-            Generate no-show schedule
+          <button id="adminBtn" class="admin-btn" type="button" aria-haspopup="dialog">
+            <span id="adminBtnLabel">Admin sign-in</span>
           </button>
         </div>
-        <div id="noShowPanel" class="noshow"></div>
-      </section>
-    </main>
+      </header>
 
-    <footer class="footer">
-      <p>Built for fast, accurate inspection-period judging.</p>
-    </footer>
+      <nav class="tabs" role="tablist" aria-label="Sections">
+        <button class="tab admin-only" type="button" role="tab" id="tabBtn-setup" data-tab="setup" aria-controls="tab-setup">
+          Setup
+        </button>
+        <button class="tab" type="button" role="tab" id="tabBtn-checkin" data-tab="checkin" aria-controls="tab-checkin">
+          Check-in <span id="checkinCount" class="tab-count"></span>
+        </button>
+        <button class="tab" type="button" role="tab" id="tabBtn-announce" data-tab="announce" aria-controls="tab-announce">
+          Announce <span id="announceDot" class="tab-dot" hidden></span>
+        </button>
+        <button class="tab" type="button" role="tab" id="tabBtn-noshow" data-tab="noshow" aria-controls="tab-noshow">
+          No-shows
+        </button>
+      </nav>
+
+      <div id="reminderBanner" class="reminder-banner" role="status" aria-live="polite" hidden></div>
+      <div id="status" class="status-bar" role="status" aria-live="polite"></div>
+
+      <main class="layout">
+        <!-- ───────────────────────────── Setup (admin) ───────────────────────────── -->
+        <section class="panel tab-panel admin-only" id="tab-setup" data-tab="setup" role="tabpanel" aria-labelledby="tabBtn-setup">
+          <ol class="steps">
+            <li class="step">
+              <div class="step-head">
+                <div>
+                  <p class="step-label">Step 1 of 3</p>
+                  <h2>Load the match schedule</h2>
+                  <p class="hint">The Tournament Manager match list (.json or .log). Interview times are worked out from it.</p>
+                </div>
+              </div>
+              <div class="dropzone" id="dropzone" aria-disabled="true">
+                <input id="fileInput" type="file" accept=".json,.log,.txt" />
+                <div class="dropzone-content">
+                  <strong>Drop the match file here</strong>
+                  <span>or click to browse</span>
+                </div>
+              </div>
+              <div id="tmMatchBox" class="tm-source admin-only" data-target="match_schedule" hidden>
+                <div class="tm-controls">
+                  <button id="tmMatchFetch" class="secondary tm-fetch" type="button">Fetch from TM</button>
+                  <label class="tm-toggle">
+                    <input id="tmMatchAuto" class="tm-switch" type="checkbox" role="switch" />
+                    <span>Auto-update</span>
+                  </label>
+                </div>
+                <p id="tmMatchStatus" class="tm-status" role="status" aria-live="polite"></p>
+              </div>
+              <p id="matchPreview" class="upload-preview" aria-live="polite"></p>
+              <details class="more">
+                <summary>Show raw file</summary>
+                <textarea id="matchSchedule" rows="8" readonly aria-label="Match schedule file contents"></textarea>
+              </details>
+            </li>
+
+            <li class="step">
+              <div class="step-head">
+                <div>
+                  <p class="step-label">Step 2 of 3</p>
+                  <h2>Check the judging window</h2>
+                  <p class="hint">Filled in for you: interviews open at the first qualification match and end before eliminations start. Change anything that's different at your event.</p>
+                </div>
+              </div>
+              <div class="grid">
+                <label>
+                  Interviews open
+                  <input id="startTime" type="text" inputmode="numeric" placeholder="9:00 AM" />
+                </label>
+                <label>
+                  Interviews close
+                  <input id="endTime" type="text" inputmode="numeric" placeholder="11:00 AM" />
+                </label>
+                <label>
+                  Judge pairs
+                  <input id="judgePairs" type="number" min="1" value="4" />
+                </label>
+                <label>
+                  Minutes per interview
+                  <input id="slotMinutes" type="number" min="1" value="10" />
+                </label>
+              </div>
+
+              <div class="lunch">
+                <label class="switch-row">
+                  <input id="judgeDuringLunch" class="tm-switch" type="checkbox" role="switch" />
+                  <span>Hold interviews during lunch</span>
+                </label>
+                <div class="lunch-times">
+                  <label>
+                    Lunch from
+                    <input id="lunchStart" type="text" inputmode="numeric" placeholder="12:00 PM" />
+                  </label>
+                  <label>
+                    to
+                    <input id="lunchEnd" type="text" inputmode="numeric" placeholder="1:00 PM" />
+                  </label>
+                </div>
+                <p id="lunchHint" class="hint"></p>
+              </div>
+
+              <p id="capacityHint" class="capacity" aria-live="polite"></p>
+
+              <details class="more">
+                <summary>More options</summary>
+                <div class="more-body">
+                  <label class="inline-field">
+                    No-show buffer around matches (min)
+                    <input id="blockMinutes" type="number" min="0" value="8" />
+                    <span class="hint">When a missed interview is re-suggested between a team's matches, keep this much time clear around them.</span>
+                  </label>
+                  <div class="event-stats-panel">
+                    <p class="more-title">Event statistics <span class="hint">(for reference only)</span></p>
+                    <div class="event-stats-grid">
+                      <div class="stat-group">
+                        <span class="stat-group-label">Rounds per team</span>
+                        <label>Min <input id="roundsMin" type="number" min="1" value="8" /></label>
+                        <label>Max <input id="roundsMax" type="number" min="1" value="8" /></label>
+                      </div>
+                      <div class="stat-group">
+                        <span class="stat-group-label">Match spacing</span>
+                        <label>Min <input id="spacingMin" type="number" min="1" value="3" /></label>
+                        <label>Max <input id="spacingMax" type="number" min="1" value="14" /></label>
+                        <label>Avg <input id="spacingAvg" type="number" min="1" value="7" /></label>
+                      </div>
+                      <div class="stat-group">
+                        <span class="stat-group-label">Repeat count</span>
+                        <label>Min <input id="repeatMin" type="number" min="1" value="1" /></label>
+                        <label>Max <input id="repeatMax" type="number" min="1" value="2" /></label>
+                        <label>Avg <input id="repeatAvg" type="number" min="1" value="1" /></label>
+                      </div>
+                      <div class="stat-group">
+                        <span class="stat-group-label">Distinct teams seen</span>
+                        <label>Min <input id="distinctMin" type="number" min="1" value="21" /></label>
+                        <label>Max <input id="distinctMax" type="number" min="1" value="24" /></label>
+                        <label>Avg <input id="distinctAvg" type="number" min="1" value="23" /></label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </li>
+
+            <li class="step">
+              <div class="step-head">
+                <div>
+                  <p class="step-label">Step 3 of 3</p>
+                  <h2>Make and print the suggested times</h2>
+                  <p class="hint">Teams get a suggested time, not an appointment. Printing locks the list and turns on check-in.</p>
+                </div>
+              </div>
+              <div class="actions">
+                <button id="generateBtn" class="primary" type="button">Make suggested times</button>
+                <button id="printBtn" class="secondary" type="button">Print &amp; start check-in</button>
+                <button id="resetBtn" class="ghost-danger" type="button">Start over</button>
+              </div>
+            </li>
+          </ol>
+        </section>
+
+        <!-- ───────────────────────────── Check-in ───────────────────────────── -->
+        <section class="panel tab-panel" id="tab-checkin" data-tab="checkin" role="tabpanel" aria-labelledby="tabBtn-checkin">
+          <div class="panel-head">
+            <h2>Check-in</h2>
+            <p id="checkinProgress" class="progress-text"></p>
+          </div>
+          <p class="notice">
+            Times are <strong>suggestions</strong>. Interviews are first come, first served: showing up at a
+            suggested time doesn't put a team ahead of one that's already waiting.
+          </p>
+          <p id="checkinGate" class="gate" hidden></p>
+          <div class="toolbar">
+            <label class="search">
+              <span class="visually-hidden">Find a team</span>
+              <input id="teamSearch" type="search" inputmode="search" placeholder="Find team #" autocomplete="off" />
+            </label>
+            <div class="segmented" role="group" aria-label="Show">
+              <button type="button" class="seg" data-filter="all">All</button>
+              <button type="button" class="seg" data-filter="waiting">Waiting</button>
+              <button type="button" class="seg" data-filter="done">Interviewed</button>
+            </div>
+            <div class="segmented" role="group" aria-label="Order">
+              <button type="button" class="seg" data-view="team">By team #</button>
+              <button type="button" class="seg" data-view="judge">By judge pair</button>
+            </div>
+            <label id="versionBox" class="version" hidden>
+              Version
+              <select id="scheduleSelect"></select>
+            </label>
+          </div>
+          <div id="schedule" class="schedule"></div>
+        </section>
+
+        <!-- ───────────────────────────── Announce ───────────────────────────── -->
+        <section class="panel tab-panel" id="tab-announce" data-tab="announce" role="tabpanel" aria-labelledby="tabBtn-announce">
+          <div class="panel-head">
+            <h2>Teams still needing an interview</h2>
+            <p id="announceCount" class="progress-text"></p>
+          </div>
+          <div id="announceTiming" class="announce-timing"></div>
+          <div id="announceList" class="announce-list"></div>
+          <div class="announce-script-box">
+            <p class="more-title">What to say</p>
+            <p id="announceScript" class="announce-script"></p>
+            <button id="copyAnnounce" class="secondary" type="button">Copy announcement</button>
+          </div>
+        </section>
+
+        <!-- ───────────────────────────── No-shows ───────────────────────────── -->
+        <section class="panel tab-panel" id="tab-noshow" data-tab="noshow" role="tabpanel" aria-labelledby="tabBtn-noshow">
+          <h2>No-show recovery</h2>
+          <p class="hint">
+            Teams marked <strong>No-show</strong> in Check-in show up here with the gaps between their matches.
+            New times are suggested from the match schedule loaded in Setup, before eliminations start.
+          </p>
+          <div class="noshow-actions admin-only">
+            <button id="generateNoShowBtn" class="primary" type="button">Suggest new times for no-shows</button>
+          </div>
+          <div id="noShowPanel" class="noshow"></div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Only visible on paper: filled from the schedule being viewed. -->
+    <div id="printTable" class="print-table"></div>
 
     <dialog
       id="adminDialog"
@@ -214,7 +263,8 @@
       <form id="adminForm" class="admin-form" novalidate>
         <h2 id="adminDialogTitle">Admin sign-in</h2>
         <p id="adminDialogDesc" class="admin-dialog-desc">
-          Enter the admin PIN shown when the server started.
+          Enter the admin PIN. It's shown in the server window when the server starts and saved in
+          <code>data/admin_pin.txt</code> on the server computer. See the README to change it.
         </p>
         <label>
           Admin PIN

@@ -1,5 +1,5 @@
 import { els, patchHtml } from "../dom.js";
-import { escapeHtml, timeRange } from "../util.js";
+import { compareTeams, escapeHtml, timeRange } from "../util.js";
 
 // Which <details> the user has expanded, keyed by team. Survives re-renders so
 // live updates never collapse something the user opened.
@@ -23,12 +23,12 @@ export const initNoShowToggleTracking = () => {
 const renderEntry = (entry) => {
   const team = escapeHtml(entry.team);
 
-  // Team not in the final match schedule: crossed off, excluded from recovery.
+  // Team no longer in the match schedule: crossed off, excluded from recovery.
   if (entry.not_in_schedule) {
     return `
       <div class="noshow-item not-in-schedule">
         <span class="crossed-off">Team ${team}</span>
-        <span class="badge checked">Not in final schedule</span>
+        <span class="badge checked">Not in match schedule</span>
       </div>`;
   }
 
@@ -61,7 +61,7 @@ const renderEntry = (entry) => {
           .map(
             (gap) => `
           <div class="gap">
-            <span>${escapeHtml(gap.between)} · ${escapeHtml(timeRange(gap.start, gap.end))}</span>
+            <span>${escapeHtml(gap.between)}, ${escapeHtml(timeRange(gap.start, gap.end))}</span>
             <span>${escapeHtml(gap.minutes)} min</span>
           </div>`
           )
@@ -76,7 +76,7 @@ export const renderNoShow = (state) => {
     (state?.last_suggestions ? [state.last_suggestions] : []);
 
   if (!suggestions.length) {
-    patchHtml(els.noShow, "<p>No no-show events yet.</p>");
+    patchHtml(els.noShow, '<p class="empty">No no-shows yet.</p>');
     return;
   }
 
@@ -86,5 +86,6 @@ export const renderNoShow = (state) => {
     if (!present.has(team)) openTeams.delete(team);
   });
 
-  patchHtml(els.noShow, suggestions.map(renderEntry).join(""));
+  const ordered = [...suggestions].sort((a, b) => compareTeams(a.team, b.team));
+  patchHtml(els.noShow, ordered.map(renderEntry).join(""));
 };

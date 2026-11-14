@@ -543,7 +543,7 @@ def test_fetch_patches_draft_like_an_upload(tm_app_client, source, tm_body, firs
     assert draft["revision"] == before + 1
     assert draft["match_schedule"] == {"text": canonical_matches(tm_body), "name": TM_NAME}
     assert draft["preview"]["match_count"] == 36 and draft["preview"]["team_count"] == 24
-    assert draft["end_time"] == "11:00 AM" and draft["start_time"] == "10:00 AM"  # auto-filled
+    assert draft["start_time"] == "11:00 AM" and draft["end_time"] == "12:00 PM"  # auto-filled from the first qual
     assert draft["final_schedule"] == {"text": "", "name": None}
 
     tm = result["tm"]

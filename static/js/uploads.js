@@ -1,4 +1,4 @@
-// File dropzones (initial match schedule + final match schedule).
+// The match schedule dropzone (Setup, step 1).
 //
 // The client never parses files: it reads the text and PATCHes it to the shared
 // draft; the server parses it and sends back a preview (counts, first match) and
@@ -60,26 +60,16 @@ export const initUploads = () => {
     input: els.fileInput,
     onFile: (file) => upload(file, "match_schedule", `Loaded ${file.name}.`),
   });
-
-  setupDropzone({
-    zone: els.finalDropzone,
-    input: els.finalFileInput,
-    onFile: (file) => upload(file, "final_schedule", `Loaded final schedule ${file.name}.`),
-  });
 };
 
-/** Subscriber (ui): dropzones are usable by the admin only. */
+/** Subscriber (ui): the dropzone is usable by the admin only. */
 export const renderUploadAccess = (_state, ui) => {
   const admin = Boolean(ui?.isAdmin);
-  [
-    [els.dropzone, els.fileInput],
-    [els.finalDropzone, els.finalFileInput],
-  ].forEach(([zone, input]) => {
-    if (!zone || !input) return;
-    zone.classList.toggle("is-disabled", !admin);
-    zone.setAttribute("aria-disabled", String(!admin));
-    input.disabled = !admin;
-  });
+  const { dropzone: zone, fileInput: input } = els;
+  if (!zone || !input) return;
+  zone.classList.toggle("is-disabled", !admin);
+  zone.setAttribute("aria-disabled", String(!admin));
+  input.disabled = !admin;
 };
 
 // Last value written to each element, so big texts are only reassigned (and the
@@ -103,7 +93,5 @@ const setPreview = (el, name, preview) => {
 export const renderUploads = (draft) => {
   if (!draft) return;
   setText(els.matchSchedule, draft.match_schedule?.text ?? "");
-  setText(els.finalMatchSchedule, draft.final_schedule?.text ?? "");
   setPreview(els.matchPreview, draft.match_schedule?.name, draft.preview);
-  setPreview(els.finalPreview, draft.final_schedule?.name, draft.final_preview);
 };

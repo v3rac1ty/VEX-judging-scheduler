@@ -15,7 +15,7 @@ import math
 import os
 import threading
 from collections.abc import Callable
-from datetime import datetime, timedelta, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
 
@@ -28,8 +28,10 @@ from .models import (
     DraftPatch,
     DraftPatchResult,
     ScheduleTextDict,
+    truthy,
 )
-from .parsing import MatchPreview, format_clock, preview_matches
+from .parsing import MatchPreview, format_clock, parse_time, preview_matches
+from .scheduling import Interval, window_end_for
 from .settings import Settings
 from .store import write_atomic
 
@@ -98,23 +100,66 @@ def _positive_int(text: str) -> int | None:
     return int(number)
 
 
-def autofill_times(
-    preview: MatchPreview | None, judge_pairs: str, slot_minutes: str, tz: tzinfo
-) -> dict[str, str] | None:
-    """Judging window ending at the first match: ceil(teams / pairs) slots long.
+def lunch_breaks(
+    lunch_start: str, lunch_end: str, judge_during_lunch: str | bool, day: date, tz: tzinfo
+) -> list[Interval]:
+    """The lunch window interviews must skip: empty when judging through lunch or unset/invalid."""
+    if truthy(judge_during_lunch):
+        return []
+    try:
+        start = parse_time(lunch_start, "lunch start", tz, day)
+        end = parse_time(lunch_end, "lunch end", tz, day)
+    except ValueError:
+        return []
+    return [(start, end)] if end > start else []
 
-    None when there is no usable first match or the knobs are not valid numbers.
+
+def detected_lunch(preview: MatchPreview | None, tz: tzinfo) -> dict[str, str]:
+    """Lunch times found in the uploaded match schedule, as setup-form text."""
+    if not preview or preview.get("error") or not preview.get("lunch_start") or not preview.get("lunch_end"):
+        return {}
+    return {
+        "lunch_start": format_clock(datetime.fromisoformat(str(preview["lunch_start"])).astimezone(tz)),
+        "lunch_end": format_clock(datetime.fromisoformat(str(preview["lunch_end"])).astimezone(tz)),
+    }
+
+
+def autofill_times(
+    preview: MatchPreview | None,
+    judge_pairs: str,
+    slot_minutes: str,
+    tz: tzinfo,
+    lunch_start: str = "",
+    lunch_end: str = "",
+    judge_during_lunch: str = "false",
+) -> dict[str, str] | None:
+    """Judging window opening at the first qualification match.
+
+    It is long enough for ceil(teams / pairs) interviews per judge pair, and
+    longer by the lunch break when interviews pause for lunch, but never past
+    the start of eliminations. None when there is no usable first match or the
+    knobs are not valid numbers.
     """
     if not preview or preview.get("error") or not preview.get("first_match"):
         return None
     pairs, slot = _positive_int(judge_pairs), _positive_int(slot_minutes)
     if pairs is None or slot is None:
         return None
-    end = datetime.fromisoformat(str(preview["first_match"])).astimezone(tz)
+    start = datetime.fromisoformat(str(preview["first_match"])).astimezone(tz)
+    breaks = lunch_breaks(lunch_start, lunch_end, judge_during_lunch, start.date(), tz)
     team_count = int(preview.get("team_count") or 0)
-    minutes = math.ceil(team_count / pairs) * slot if team_count > 0 else DEFAULT_DURATION_MINUTES
-    start = end - timedelta(minutes=minutes)
+    if team_count > 0:
+        end = window_end_for(start, math.ceil(team_count / pairs), slot, breaks)
+    else:
+        end = start + timedelta(minutes=DEFAULT_DURATION_MINUTES)
+    # No interviews once eliminations start; the setup form warns when teams then don't fit.
+    if preview.get("elims_start"):
+        end = min(end, datetime.fromisoformat(str(preview["elims_start"])).astimezone(tz))
     return {"start_time": format_clock(start), "end_time": format_clock(end)}
+
+
+# Edits to any of these re-derive the judging window from the uploaded schedule.
+AUTOFILL_TRIGGERS = ("judge_pairs", "slot_minutes", "lunch_start", "lunch_end", "judge_during_lunch")
 
 
 def compute_changes(draft: DraftDict, patch: DraftPatch, tz: tzinfo) -> dict[str, Any]:
@@ -158,16 +203,28 @@ def compute_changes(draft: DraftDict, patch: DraftPatch, tz: tzinfo) -> dict[str
             if preview != draft[preview_field]:  # type: ignore[literal-required]
                 changes[preview_field] = preview
 
-    if "match_schedule" in text_changed or "judge_pairs" in changes or "slot_minutes" in changes:
-        merged_draft = {**draft, **changes}
-        times = autofill_times(
-            merged_draft["preview"], merged_draft["judge_pairs"], merged_draft["slot_minutes"], tz
-        )
-        for key, value in (times or {}).items():
+    def apply_derived(values: dict[str, str]) -> None:
+        for key, value in values.items():
             if value != draft[key]:  # type: ignore[literal-required]
                 changes[key] = value
             else:
                 changes.pop(key, None)
+
+    if "match_schedule" in text_changed:
+        apply_derived(detected_lunch({**draft, **changes}["preview"], tz))
+
+    if "match_schedule" in text_changed or any(key in changes for key in AUTOFILL_TRIGGERS):
+        merged_draft = {**draft, **changes}
+        times = autofill_times(
+            merged_draft["preview"],
+            merged_draft["judge_pairs"],
+            merged_draft["slot_minutes"],
+            tz,
+            merged_draft["lunch_start"],
+            merged_draft["lunch_end"],
+            merged_draft["judge_during_lunch"],
+        )
+        apply_derived(times or {})
 
     return changes
 

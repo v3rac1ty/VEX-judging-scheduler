@@ -46,7 +46,7 @@ export const loadInitialState = async () => {
 export const generateSchedule = async () => {
   if (!requireAdmin()) return;
   await withBusy(els.generateBtn, async () => {
-    setStatus("Generating schedule...");
+    setStatus("Making suggested times…");
     // Make sure typed-but-unsent edits are in the draft before reading it.
     await flushDraft();
     const data = await post(
@@ -60,11 +60,11 @@ export const generateSchedule = async () => {
       const total = Number(data.team_count);
       setStatus(
         Number.isFinite(total)
-          ? `Error: scheduled ${total - unassigned} of ${total} teams. ${unassigned} unassigned.`
-          : `Error: ${unassigned} teams unassigned.`
+          ? `Only ${total - unassigned} of ${total} teams got a suggested time. Add judge pairs, shorten interviews, or close later.`
+          : `${unassigned} teams didn't get a suggested time. Add judge pairs, shorten interviews, or close later.`
       );
     } else {
-      setStatus("Schedule ready.");
+      setStatus("Suggested times are ready. Check them in the Check-in tab, then print to start check-in.");
     }
   });
 };
@@ -72,25 +72,26 @@ export const generateSchedule = async () => {
 export const generateNoShowSchedule = async () => {
   if (!requireAdmin()) return;
   await withBusy(els.generateNoShowBtn, async () => {
-    setStatus("Generating no-show schedule...");
+    setStatus("Suggesting new times for no-shows…");
     await flushDraft();
     const draft = getDraft();
     const data = await post(
       "/api/generate-noshow",
       {
-        match_schedule: draft?.final_schedule?.text || "",
+        // The Setup schedule; blank lets the server use the one saved when times were made.
+        match_schedule: draft?.match_schedule?.text || "",
         event_stats: collectEventStats(draft),
       },
       "Failed to generate no-show schedule."
     );
-    if (data) setStatus("No-show schedule ready.");
+    if (data) setStatus("New times suggested for no-shows. Print them to check those teams off.");
   });
 };
 
 export const printSchedule = async () => {
   if (!requireAdmin()) return;
   if (!hasSchedule(getState(), getUi())) {
-    setStatus("Generate a schedule before printing.");
+    setStatus("Make the suggested times before printing.");
     return;
   }
   await withBusy(els.printBtn, async () => {
@@ -101,14 +102,14 @@ export const printSchedule = async () => {
     if (!data) return;
     // Show the freshly printed (locked) schedule here; other devices just
     // receive the locked state over SSE and never open a print dialog.
-    setUi({ viewScheduleId: null });
+    setUi({ viewScheduleId: null, tab: "checkin" });
     window.print();
   });
 };
 
 export const resetAll = async () => {
   if (!requireAdmin()) return;
-  if (!window.confirm("Reset all schedules and no-show data?")) {
+  if (!window.confirm("Start over? This clears all suggested times, check-ins and no-show data.")) {
     return;
   }
   await withBusy(els.resetBtn, async () => {
@@ -116,7 +117,7 @@ export const resetAll = async () => {
     // draft store (and over SSE to every other device); nothing is cleared by hand.
     const data = await post("/api/reset", {}, "Failed to reset.");
     if (data === null) return;
-    setStatus("Reset complete.");
+    setStatus("Cleared. Load a match schedule to start again.");
   });
 };
 
@@ -132,14 +133,14 @@ export const onScheduleSelectChange = () => {
  */
 export const updateTeamStatus = async (action, team, button) => {
   if (!team) {
-    setStatus("Cannot update unassigned slot.");
+    setStatus("That team has no suggested time to update.");
     return;
   }
   if (!canEditViewedSchedule(getState(), getUi())) {
     setStatus(
       action === "not-competing"
-        ? "Print the schedule before updating teams."
-        : "Print the schedule before checking off teams."
+        ? "Print the suggested times before updating teams."
+        : "Print the suggested times before checking teams off."
     );
     return;
   }
@@ -161,11 +162,12 @@ export const updateTeamStatus = async (action, team, button) => {
         action === "not-competing" ? "Failed to update team." : "Failed to update."
       );
       if (!data) return;
-      setStatus(
-        action === "not-competing"
-          ? `Marked team ${team} as not competing.`
-          : `Updated team ${team}.`
-      );
+      const done = {
+        "not-competing": `Marked team ${team} as not competing.`,
+        checkoff: `Marked team ${team} as interviewed.`,
+        noshow: `Marked team ${team} as a no-show. It's listed in the No-shows tab.`,
+      };
+      setStatus(done[action] || `Updated team ${team}.`);
     });
   } finally {
     inFlight.delete(key);
@@ -185,3 +187,13 @@ export const onNoShowClick = (event) => {
 };
 
 export const onSearchInput = () => setUi({ search: els.teamSearch.value });
+
+export const onFilterClick = (event) => {
+  const button = event.target.closest("button[data-filter]");
+  if (button) setUi({ filter: button.dataset.filter });
+};
+
+export const onViewClick = (event) => {
+  const button = event.target.closest("button[data-view]");
+  if (button) setUi({ view: button.dataset.view });
+};

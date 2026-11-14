@@ -15,6 +15,7 @@ from judging.scheduling import (
     find_slot_in_gap,
     place_no_shows,
     snap_to_five,
+    window_end_for,
 )
 from tm_fixture import TEAMS
 
@@ -145,3 +146,30 @@ def test_no_show_placement_inside_damped_gaps(matches, tz, first_match, block_mi
 
 def test_no_show_placement_without_suggestions():
     assert place_no_shows([], [], 2, 10, 8) == ([], {})
+
+
+def test_build_slots_skip_lunch(first_match):
+    start, end = at(first_match, 9), at(first_match, 11)
+    lunch = [(at(first_match, 9, 25), at(first_match, 10))]
+    slots = build_slots(2, start, end, 10, lunch)
+    starts = sorted({s.start for s in slots if s.judge_id == 1})
+    # 9:00 and 9:10 fit; 9:20 would run into lunch, so the next one starts at 10:00.
+    assert starts == [at(first_match, 9), at(first_match, 9, 10)] + [at(first_match, 10, m) for m in range(0, 60, 10)]
+    assert not any(s.start < lunch[0][1] and s.end > lunch[0][0] for s in slots)
+
+
+def test_window_end_for_matches_build_slots(first_match):
+    lunch = [(at(first_match, 9, 25), at(first_match, 10))]
+    end = window_end_for(at(first_match, 9), 6, 10, lunch)
+    assert end == at(first_match, 10, 40)
+    assert len(build_slots(1, at(first_match, 9), end, 10, lunch)) == 6
+    assert window_end_for(at(first_match, 9), 6, 10) == at(first_match, 10)
+
+
+def test_no_show_placement_avoids_lunch(matches, tz, first_match):
+    team_matches = extract_team_matches(matches, tz)
+    team = next(iter(team_matches))
+    suggestion = build_no_show_suggestion(team, team_matches[team])
+    everything = [(at(first_match, 0), at(first_match, 23, 59))]
+    slots, _ = place_no_shows([suggestion], [], judge_pairs=2, slot_minutes=5, block_minutes=0, breaks=everything)
+    assert slots == []

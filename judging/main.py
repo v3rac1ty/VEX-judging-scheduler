@@ -27,6 +27,19 @@ from .tm import TMError, TMService, TMSource
 _VALUE_ERROR_PREFIX = "Value error, "
 
 
+class RevalidatedStaticFiles(StaticFiles):
+    """Static files that browsers must re-check on every load.
+
+    Without this, a device can keep running yesterday's cached scripts against
+    today's page after an update. On the event LAN the re-check is a cheap 304.
+    """
+
+    def file_response(self, *args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def _describe_validation_error(error: dict[str, Any]) -> str:
     kind = error.get("type")
     loc = [str(part) for part in error.get("loc", ()) if part != "body"]
@@ -115,7 +128,7 @@ def create_app(
     app.add_exception_handler(ServiceError, _service_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(TMError, _tm_error_handler)  # type: ignore[arg-type]
     app.add_middleware(BodySizeLimitMiddleware)
-    app.mount("/static", StaticFiles(directory=settings.static_dir), name="static")
+    app.mount("/static", RevalidatedStaticFiles(directory=settings.static_dir), name="static")
     app.include_router(admin_router)
     app.include_router(router)
     return app

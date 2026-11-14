@@ -38,10 +38,18 @@ const FIELDS = [
   field(["block_minutes"], els.blockMinutes),
   field(["start_time"], els.startTime),
   field(["end_time"], els.endTime),
+  field(["lunch_start"], els.lunchStart),
+  field(["lunch_end"], els.lunchEnd),
+  field(["judge_during_lunch"], els.judgeDuringLunch),
   ...Object.keys(STAT_DEFAULTS).map((key) => field(["event_stats", key], els.stats[key])),
 ].filter((f) => f.el);
 
 const readPath = (obj, path) => path.reduce((acc, key) => acc?.[key], obj);
+
+const isCheckbox = (el) => el.type === "checkbox";
+/** Checkboxes are stored as "true" / "false" text like every other setup field. */
+export const isOn = (value) => ["true", "1", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
+const inputValue = (el) => (isCheckbox(el) ? String(el.checked) : el.value);
 
 const nestPatch = (path, value) =>
   path.reduceRight((acc, key) => ({ [key]: acc }), value);
@@ -73,6 +81,11 @@ export const applyDraftToInputs = (draft = getDraft()) => {
     // A disabled input cannot be edited, so focus no longer protects it.
     if ((el === document.activeElement && !el.disabled) || isDirty(key)) return;
     const value = readPath(draft, path);
+    if (isCheckbox(el)) {
+      const checked = isOn(value);
+      if (el.checked !== checked) el.checked = checked;
+      return;
+    }
     const text = value == null ? "" : String(value);
     if (el.value !== text) {
       el.value = text;
@@ -142,7 +155,7 @@ export const patchDraft = async (body) => {
 
 const onInput = ({ key, path, el }) => {
   if (!getUi().isAdmin) return;
-  mergeInto(pending, nestPatch(path, el.value));
+  mergeInto(pending, nestPatch(path, inputValue(el)));
   pendingKeys.add(key);
   clearTimeout(timer);
   timer = setTimeout(flushDraft, DEBOUNCE_MS);
@@ -193,6 +206,9 @@ export const collectSetup = (draft = getDraft()) => {
     block_minutes: draft?.block_minutes ?? "",
     start_time: draft?.start_time ?? "",
     end_time: draft?.end_time ?? "",
+    lunch_start: draft?.lunch_start ?? "",
+    lunch_end: draft?.lunch_end ?? "",
+    judge_during_lunch: isOn(draft?.judge_during_lunch),
     match_schedule: draft?.match_schedule?.text ?? "",
     event_stats: stats,
   };

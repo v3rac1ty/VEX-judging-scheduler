@@ -87,6 +87,8 @@ def test_match_labels():
 
 def test_team_sort_key():
     assert sorted(["1234B", "99", "100", "1234A"], key=team_sort_key) == ["99", "100", "1234A", "1234B"]
+    # Lettered teams sort by number first, not as text ("10A" before "9A" was the old order).
+    assert sorted(["10A", "9A", "9B", "123X", "VRC"], key=team_sort_key) == ["9A", "9B", "10A", "123X", "VRC"]
 
 
 @pytest.mark.parametrize(

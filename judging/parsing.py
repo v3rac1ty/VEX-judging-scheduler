@@ -172,11 +172,16 @@ def normalize_match_entries(entries: list[Any]) -> list[MatchEntry]:
     return normalized
 
 
-def team_sort_key(team: str) -> tuple[int, str]:
-    try:
-        return (0, f"{int(team):06d}")
-    except ValueError:
-        return (1, team)
+_TEAM_NUMBER = re.compile(r"^\s*(\d+)\s*(.*?)\s*$")
+
+
+def team_sort_key(team: str) -> tuple[int, int, str]:
+    """Numerical order: 99A < 1234A < 1234B < 5678X; names without a number go last."""
+    text = str(team)
+    match = _TEAM_NUMBER.match(text)
+    if match:
+        return (0, int(match.group(1)), match.group(2).upper())
+    return (1, 0, text.strip().upper())
 
 
 _TIME_12H = re.compile(r"^(\d{1,2})(?::(\d{2}))?\s*([AaPp])\.?\s*[Mm]\.?$")
@@ -215,7 +220,82 @@ class MatchPreview(TypedDict):
     match_count: int
     team_count: int
     first_match: str | None  # ISO 8601 in the event timezone
+    # Lunch break detected in the qualification schedule (ISO 8601), else None.
+    lunch_start: str | None
+    lunch_end: str | None
+    # When eliminations start: the first elimination match, or (none scheduled
+    # yet) the end of the last qualification match. Interviews must end by then.
+    elims_start: str | None
     error: str | None
+
+
+# Rounds that are not eliminations; any other round name (R16, QF, SF, F, ...) is.
+NON_ELIM_ROUNDS = frozenset({"", "QUAL", "PRACTICE"})
+
+# A pause in qualification matches this long (and several match cycles long) is lunch.
+LUNCH_MIN_MINUTES = 30
+LUNCH_MIN_CYCLES = 4
+
+
+def detect_lunch(times: list[int]) -> tuple[int, int] | None:
+    """(start, end) epoch seconds of the longest break between scheduled matches, if any.
+
+    The break starts one typical match cycle after the last match before it (that
+    match is still being played) and ends when the next match is scheduled.
+    """
+    ordered = sorted(set(times))
+    if len(ordered) < 3:
+        return None
+    diffs = [b - a for a, b in zip(ordered, ordered[1:])]
+    cycle = sorted(diffs)[len(diffs) // 2]  # median spacing between matches
+    longest = max(range(len(diffs)), key=lambda i: diffs[i])
+    gap = diffs[longest]
+    if gap < max(LUNCH_MIN_MINUTES * 60, LUNCH_MIN_CYCLES * cycle):
+        return None
+    return ordered[longest] + cycle, ordered[longest + 1]
+
+
+def _median_cycle(times: list[int]) -> int:
+    ordered = sorted(set(times))
+    diffs = [b - a for a, b in zip(ordered, ordered[1:])]
+    return sorted(diffs)[len(diffs) // 2] if diffs else 0
+
+
+def elims_start_seconds(qual_times: list[int], elim_times: list[int]) -> int | None:
+    """First elimination match; else the end of the last qual match (its start + one cycle)."""
+    if elim_times:
+        return min(elim_times)
+    if qual_times:
+        return max(qual_times) + _median_cycle(qual_times)
+    return None
+
+
+def _round_times(matches: list[dict[str, Any]]) -> tuple[list[int], list[int], list[int]]:
+    """Scheduled start times (epoch seconds): (qualification, elimination, all)."""
+    quals: list[int] = []
+    elims: list[int] = []
+    every: list[int] = []
+    for match in matches:
+        info = match.get("matchInfo") if isinstance(match, dict) else None
+        if not isinstance(info, dict):
+            continue
+        seconds = _epoch_seconds(info.get("timeScheduled"))
+        if seconds is None:
+            continue
+        every.append(seconds)
+        round_name = str((info.get("matchTuple") or {}).get("round", "")).upper()
+        if round_name == "QUAL":
+            quals.append(seconds)
+        elif round_name not in NON_ELIM_ROUNDS:
+            elims.append(seconds)
+    return quals, elims, every
+
+
+def elims_start(matches: list[dict[str, Any]], tz: tzinfo) -> datetime | None:
+    """When interviews must be over: see `elims_start_seconds`."""
+    quals, elims, _ = _round_times(matches)
+    seconds = elims_start_seconds(quals, elims)
+    return datetime.fromtimestamp(seconds, tz=tz) if seconds is not None else None
 
 
 def preview_matches(raw_text: str, tz: tzinfo) -> MatchPreview | None:
@@ -230,11 +310,17 @@ def preview_matches(raw_text: str, tz: tzinfo) -> MatchPreview | None:
     try:
         matches = parse_matches(text)
     except ValueError as exc:
-        return {"match_count": 0, "team_count": 0, "first_match": None, "error": str(exc)}
+        return {
+            "match_count": 0,
+            "team_count": 0,
+            "first_match": None,
+            "lunch_start": None,
+            "lunch_end": None,
+            "elims_start": None,
+            "error": str(exc),
+        }
 
     teams: set[str] = set()
-    earliest_qual: int | None = None
-    earliest_any: int | None = None
     for match in matches:
         info = match.get("matchInfo") or {}
         if not isinstance(info, dict):
@@ -244,19 +330,22 @@ def preview_matches(raw_text: str, tz: tzinfo) -> MatchPreview | None:
                 number = str((team or {}).get("number", "")).strip() if isinstance(team, dict) else ""
                 if number:
                     teams.add(number)
-        seconds = _epoch_seconds(info.get("timeScheduled"))
-        if seconds is None:
-            continue
-        earliest_any = seconds if earliest_any is None else min(earliest_any, seconds)
-        round_name = str((info.get("matchTuple") or {}).get("round", "")).upper()
-        if round_name == "QUAL":
-            earliest_qual = seconds if earliest_qual is None else min(earliest_qual, seconds)
 
-    first = earliest_qual if earliest_qual is not None else earliest_any
+    qual_times, elim_times, any_times = _round_times(matches)
+    first = min(qual_times) if qual_times else (min(any_times) if any_times else None)
+    lunch = detect_lunch(qual_times or any_times)
+    elims = elims_start_seconds(qual_times, elim_times)
+
+    def iso(seconds: int | None) -> str | None:
+        return datetime.fromtimestamp(seconds, tz=tz).isoformat() if seconds is not None else None
+
     return {
         "match_count": len(matches),
         "team_count": len(teams),
-        "first_match": datetime.fromtimestamp(first, tz=tz).isoformat() if first is not None else None,
+        "first_match": iso(first),
+        "lunch_start": iso(lunch[0]) if lunch else None,
+        "lunch_end": iso(lunch[1]) if lunch else None,
+        "elims_start": iso(elims),
         "error": None,
     }
 
