@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from collections.abc import MutableMapping
 from dataclasses import dataclass, field
 from datetime import datetime, tzinfo
@@ -38,9 +39,23 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-STATIC_DIR = BASE_DIR / "static"
-DOTENV_PATH = BASE_DIR / ".env"
+
+
+def _app_home() -> Path:
+    """Folder holding data/ and .env: the repo, or the .exe's folder when bundled.
+
+    A PyInstaller one-file build unpacks the code (and static/) into a temporary
+    folder that is deleted on exit, so event data must live next to the .exe instead.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return BASE_DIR
+
+
+APP_HOME = _app_home()
+DATA_DIR = APP_HOME / "data"
+STATIC_DIR = BASE_DIR / "static"  # bundled read-only files: fine to live in the unpack folder
+DOTENV_PATH = APP_HOME / ".env"
 
 ADMIN_PIN_MIN_LENGTH = 4
 ADMIN_PIN_MAX_LENGTH = 12

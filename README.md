@@ -1,7 +1,25 @@
 # VEX-judging-scheduler
-Generates a schedule for VEX teams to judge during the inspection period.
+Suggests judging interview times for VEX teams, tracks check-in, and tells the emcee who still needs an interview.
 
-## Quick start
+## Windows: just double-click (no setup)
+1. Download `VEX-Judging-Scheduler.exe` from the [latest release](https://github.com/v3rac1ty/VEX-judging-scheduler/releases/latest).
+2. Make a new folder for it (for example `Documents\Judging`) and move the `.exe` there.
+   Your event data is saved in a `data` folder next to it.
+3. Double-click the `.exe`. A window opens with the web address and the admin PIN, and your
+   browser opens the app.
+4. The first time, Windows may ask:
+   - **"Windows protected your PC"**: click **More info**, then **Run anyway**.
+   - **Windows Firewall**: click **Allow access** so other devices on the network can connect.
+5. Other devices (phones, laptops) on the same network open the address shown in the window,
+   for example `http://192.168.1.230:8000`.
+
+Keep the window open while you use the app. Closing it stops the server.
+
+### Building the .exe yourself
+Needs Python 3.10 or newer. In the project folder, double-click `build_exe.bat` (or run it from a
+terminal). The result is `dist\VEX-Judging-Scheduler.exe`.
+
+## Quick start (from source)
 1. Install dependencies:
 	```bash
 	python -m venv .venv

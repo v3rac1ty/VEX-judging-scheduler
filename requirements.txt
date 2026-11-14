@@ -1,2 +1,4 @@
 fastapi==0.115.7
 uvicorn==0.34.0
+# Timezone names for Windows (zoneinfo has no system database there).
+tzdata==2026.6
